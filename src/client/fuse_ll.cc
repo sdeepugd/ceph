@@ -565,7 +565,6 @@ static void fuse_ll_symlink(fuse_req_t req, const char *existing,
     fuse_reply_err(req, -r);
   }
 
-
   // XXX NB, we dont iput(i2) because FUSE will do so in a matching
   // fuse_ll_forget()
   cfuse->iput(i1); // iput required

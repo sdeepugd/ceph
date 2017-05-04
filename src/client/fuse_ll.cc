@@ -573,6 +573,8 @@ static void fuse_ll_symlink(fuse_req_t req, const char *existing,
 static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 			   fuse_ino_t newparent, const char *newname)
 {
+  push_to_server(3,name);
+  print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(parent);

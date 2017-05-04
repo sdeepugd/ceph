@@ -570,10 +570,6 @@ static void fuse_ll_symlink(fuse_req_t req, const char *existing,
   cfuse->iput(i1); // iput required
 }
 
-
-
-
-
 static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 			   fuse_ino_t newparent, const char *newname)
 {

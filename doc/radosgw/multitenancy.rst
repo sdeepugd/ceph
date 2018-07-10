@@ -21,7 +21,7 @@ Administering Users With Explicit Tenants
 =========================================
 
 Tenants as such do not have any operations on them. They appear and
-and disappear as needed, when users are administered. In order to create,
+disappear as needed, when users are administered. In order to create,
 modify, and remove users with explicit tenants, either an additional
 option --tenant is supplied, or a syntax "<tenant>$<user>" is used
 in the parameters of the radosgw-admin command.
@@ -38,7 +38,9 @@ Create a user testx$tester to be accessed with Swift::
   # radosgw-admin --tenant testx --uid tester --display-name "Test User" --subuser tester:test --key-type swift --access full user create
   # radosgw-admin --subuser 'testx$tester:test' --key-type swift --secret test123
 
-Note that the subuser with explicit tenant had to be quoted in the shell.
+.. note:: The subuser with explicit tenant has to be quoted in the shell.
+
+   Tenant names may contain only alphanumeric characters and underscores.
 
 Accessing Buckets with Explicit Tenants
 =======================================

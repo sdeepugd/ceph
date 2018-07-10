@@ -7,8 +7,9 @@
 #define CEPH_RGW_CRYPT_H
 
 #include <rgw/rgw_op.h>
+#include <rgw/rgw_rest.h>
 #include <rgw/rgw_rest_s3.h>
-#include <boost/utility/string_ref.hpp>
+#include <boost/utility/string_view.hpp>
 
 /**
  * \brief Interface for block encryption methods
@@ -95,7 +96,7 @@ class RGWGetObj_BlockDecrypt : public RGWGetObj_Filter {
   std::vector<size_t> parts_len; /**< size of parts of multipart object, parsed from manifest */
 public:
   RGWGetObj_BlockDecrypt(CephContext* cct,
-                         RGWGetDataCB* next,
+                         RGWGetObj_Filter* next,
                          std::unique_ptr<BlockCrypt> crypt);
   virtual ~RGWGetObj_BlockDecrypt();
 
@@ -136,14 +137,18 @@ public:
 
 
 int rgw_s3_prepare_encrypt(struct req_state* s,
-                       map<string, bufferlist>& attrs,
-                       map<string, post_form_part, const ltstr_nocase>* parts,
-                       std::unique_ptr<BlockCrypt>* block_crypt,
-                       std::map<std::string, std::string>& crypt_http_responses);
+                           std::map<std::string, ceph::bufferlist>& attrs,
+                           std::map<std::string,
+                                    RGWPostObj_ObjStore::post_form_part,
+                                    const ltstr_nocase>* parts,
+                           std::unique_ptr<BlockCrypt>* block_crypt,
+                           std::map<std::string,
+                                    std::string>& crypt_http_responses);
 
 int rgw_s3_prepare_decrypt(struct req_state* s,
-                       map<string, bufferlist>& attrs,
-                       std::unique_ptr<BlockCrypt>* block_crypt,
-                       std::map<std::string, std::string>& crypt_http_responses);
+                           std::map<std::string, ceph::bufferlist>& attrs,
+                           std::unique_ptr<BlockCrypt>* block_crypt,
+                           std::map<std::string,
+                                    std::string>& crypt_http_responses);
 
 #endif

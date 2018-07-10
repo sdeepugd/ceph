@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -10,6 +10,7 @@ elif [ -e $script_root/../build/CMakeCache.txt ]; then
     cd $script_root/../build
     script_root=$PWD
 fi
+ceph_bin=$script_root/bin
 vstart_path=`dirname $0`
 
 [ "$#" -lt 2 ] && echo "usage: $0 <name> <port> [params...]" && exit 1
@@ -26,4 +27,4 @@ logfile=$run_root/out/radosgw.${port}.log
 
 $vstart_path/mstop.sh $name radosgw $port
 
-$vstart_path/mrun $name radosgw --rgw-frontends="civetweb port=$port" --pid-file=$pidfile --admin-socket=$asokfile "$@" --log-file=$logfile
+$vstart_path/mrun $name radosgw --rgw-frontends="civetweb port=$port" -n client.rgw --pid-file=$pidfile --admin-socket=$asokfile "$@" --log-file=$logfile

@@ -4,18 +4,12 @@
 #ifndef CEPH_TRACEPOINT_PROVIDER_H
 #define CEPH_TRACEPOINT_PROVIDER_H
 
-#include "include/int_types.h"
 #include "common/ceph_context.h"
 #include "common/config_obs.h"
 #include "common/Mutex.h"
 #include <dlfcn.h>
-#include <set>
-#include <string>
-#include <boost/noncopyable.hpp>
 
-struct md_config_t;
-
-class TracepointProvider : public md_config_obs_t, boost::noncopyable {
+class TracepointProvider : public md_config_obs_t {
 public:
   struct Traits {
     const char *library;
@@ -54,11 +48,16 @@ public:
                      const char *config_key);
   ~TracepointProvider() override;
 
+  TracepointProvider(const TracepointProvider&) = delete;
+  TracepointProvider operator =(const TracepointProvider&) = delete;
+  TracepointProvider(TracepointProvider&&) = delete;
+  TracepointProvider operator =(TracepointProvider&&) = delete;
+
   template <const Traits &traits>
   static void initialize(CephContext *cct) {
 #ifdef WITH_LTTNG
-    TypedSingleton<traits> *singleton;
-    cct->lookup_or_create_singleton_object(singleton, traits.library);
+     cct->lookup_or_create_singleton_object<TypedSingleton<traits>>(
+       traits.library, false, cct);
 #endif
   }
 
@@ -66,7 +65,7 @@ protected:
   const char** get_tracked_conf_keys() const override {
     return m_config_keys;
   }
-  void handle_conf_change(const struct md_config_t *conf,
+  void handle_conf_change(const md_config_t *conf,
                                   const std::set <std::string> &changed) override;
 
 private:
@@ -77,7 +76,7 @@ private:
   Mutex m_lock;
   void* m_handle = nullptr;
 
-  void verify_config(const struct md_config_t *conf);
+  void verify_config(const md_config_t *conf);
 };
 
 #endif // CEPH_TRACEPOINT_PROVIDER_H

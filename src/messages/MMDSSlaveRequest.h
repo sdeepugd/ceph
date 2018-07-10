@@ -101,6 +101,7 @@ class MMDSSlaveRequest : public Message {
   static const unsigned FLAG_NOTJOURNALED =	1<<2;
   static const unsigned FLAG_EROFS =		1<<3;
   static const unsigned FLAG_ABORT =		1<<4;
+  static const unsigned FLAG_INTERRUPTED =	1<<5;
 
   // for locking
   __u16 lock_type;  // lock object type
@@ -116,10 +117,12 @@ class MMDSSlaveRequest : public Message {
   set<mds_rank_t> witnesses;
   bufferlist inode_export;
   version_t inode_export_v;
-  bufferlist srci_replica;
+  mds_rank_t srcdn_auth;
   utime_t op_stamp;
 
-  bufferlist stray;  // stray dir + dentry
+  bufferlist straybl;  // stray dir + dentry
+  bufferlist srci_snapbl;
+  bufferlist desti_snapbl;
 
 public:
   metareqid_t get_reqid() { return reqid; }
@@ -142,8 +145,11 @@ public:
   bool is_error_rofs() { return (flags & FLAG_EROFS); }
   bool is_abort() { return (flags & FLAG_ABORT); }
   void mark_abort() { flags |= FLAG_ABORT; }
+  bool is_interrupted() { return (flags & FLAG_INTERRUPTED); }
+  void mark_interrupted() { flags |= FLAG_INTERRUPTED; }
 
   void set_lock_type(int t) { lock_type = t; }
+  bufferlist& get_lock_data() { return inode_export; }
 
 
   // ----
@@ -151,45 +157,50 @@ public:
   MMDSSlaveRequest(metareqid_t ri, __u32 att, int o) : 
     Message(MSG_MDS_SLAVE_REQUEST),
     reqid(ri), attempt(att), op(o), flags(0), lock_type(0),
-    inode_export_v(0) { }
+    inode_export_v(0), srcdn_auth(MDS_RANK_NONE) { }
 private:
   ~MMDSSlaveRequest() override {}
 
 public:
   void encode_payload(uint64_t features) override {
-    ::encode(reqid, payload);
-    ::encode(attempt, payload);
-    ::encode(op, payload);
-    ::encode(flags, payload);
-    ::encode(lock_type, payload);
-    ::encode(object_info, payload);
-    ::encode(authpins, payload);
-    ::encode(srcdnpath, payload);
-    ::encode(destdnpath, payload);
-    ::encode(witnesses, payload);
-    ::encode(op_stamp, payload);
-    ::encode(inode_export, payload);
-    ::encode(inode_export_v, payload);
-    ::encode(srci_replica, payload);
-    ::encode(stray, payload);
+    using ceph::encode;
+    encode(reqid, payload);
+    encode(attempt, payload);
+    encode(op, payload);
+    encode(flags, payload);
+    encode(lock_type, payload);
+    encode(object_info, payload);
+    encode(authpins, payload);
+    encode(srcdnpath, payload);
+    encode(destdnpath, payload);
+    encode(witnesses, payload);
+    encode(op_stamp, payload);
+    encode(inode_export, payload);
+    encode(inode_export_v, payload);
+    encode(srcdn_auth, payload);
+    encode(straybl, payload);
+    encode(srci_snapbl, payload);
+    encode(desti_snapbl, payload);
   }
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(reqid, p);
-    ::decode(attempt, p);
-    ::decode(op, p);
-    ::decode(flags, p);
-    ::decode(lock_type, p);
-    ::decode(object_info, p);
-    ::decode(authpins, p);
-    ::decode(srcdnpath, p);
-    ::decode(destdnpath, p);
-    ::decode(witnesses, p);
-    ::decode(op_stamp, p);
-    ::decode(inode_export, p);
-    ::decode(inode_export_v, p);
-    ::decode(srci_replica, p);
-    ::decode(stray, p);
+    auto p = payload.cbegin();
+    decode(reqid, p);
+    decode(attempt, p);
+    decode(op, p);
+    decode(flags, p);
+    decode(lock_type, p);
+    decode(object_info, p);
+    decode(authpins, p);
+    decode(srcdnpath, p);
+    decode(destdnpath, p);
+    decode(witnesses, p);
+    decode(op_stamp, p);
+    decode(inode_export, p);
+    decode(inode_export_v, p);
+    decode(srcdn_auth, p);
+    decode(straybl, p);
+    decode(srci_snapbl, p);
+    decode(desti_snapbl, p);
   }
 
   const char *get_type_name() const override { return "slave_request"; }

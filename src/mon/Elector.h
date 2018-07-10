@@ -17,7 +17,6 @@
 #define CEPH_MON_ELECTOR_H
 
 #include <map>
-using namespace std;
 
 #include "include/types.h"
 #include "include/Context.h"
@@ -47,9 +46,10 @@ class Elector {
    * mon-specific features. Instead of keeping maps to hold them both, or
    * a pair, which would be weird, a struct to keep them seems appropriate.
    */
-  struct elector_features_t {
+  struct elector_info_t {
     uint64_t cluster_features;
     mon_feature_t mon_features;
+    map<string,string> metadata;
   };
 
   /**
@@ -65,7 +65,7 @@ class Elector {
    * Event callback responsible for dealing with an expired election once a
    * timer runs out and fires up.
    */
-  Context *expire_event;
+  Context *expire_event = nullptr;
 
   /**
    * Resets the expire_event timer, by cancelling any existing one and
@@ -121,16 +121,12 @@ class Elector {
    */
   bool     electing_me;
   /**
-   * Holds the time at which we started the election.
-   */
-  utime_t  start_stamp;
-  /**
    * Set containing all those that acked our proposal to become the Leader.
    *
    * If we are acked by everyone in the MonMap, we will declare
    * victory.  Also note each peer's feature set.
    */
-  map<int, elector_features_t> acked_me;
+  map<int, elector_info_t> acked_me;
   /**
    * @}
    */
@@ -142,10 +138,6 @@ class Elector {
    * Indicates who we have acked
    */
   int	    leader_acked;
-  /**
-   * Indicates when we have acked it
-   */
-  utime_t   ack_stamp;
   /**
    * @}
    */
@@ -335,7 +327,6 @@ class Elector {
    * @param m A Monitor instance
    */
   explicit Elector(Monitor *m) : mon(m),
-			expire_event(0),
 			epoch(0),
 			participating(true),
 			electing_me(false),

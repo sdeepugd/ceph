@@ -4,9 +4,6 @@
 #ifndef CEPH_CLS_VERSION_OPS_H
 #define CEPH_CLS_VERSION_OPS_H
 
-#include <map>
-
-#include "include/types.h"
 #include "cls_version_types.h"
 
 struct cls_version_set_op {
@@ -16,13 +13,13 @@ struct cls_version_set_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(objv, bl);
+    encode(objv, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(objv, bl);
+    decode(objv, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -36,15 +33,15 @@ struct cls_version_inc_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(objv, bl);
-    ::encode(conds, bl);
+    encode(objv, bl);
+    encode(conds, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(objv, bl);
-    ::decode(conds, bl);
+    decode(objv, bl);
+    decode(conds, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -58,15 +55,15 @@ struct cls_version_check_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(objv, bl);
-    ::encode(conds, bl);
+    encode(objv, bl);
+    encode(conds, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(objv, bl);
-    ::decode(conds, bl);
+    decode(objv, bl);
+    decode(conds, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -79,13 +76,13 @@ struct cls_version_read_ret {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(objv, bl);
+    encode(objv, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(objv, bl);
+    decode(objv, bl);
     DECODE_FINISH(bl);
   }
 };

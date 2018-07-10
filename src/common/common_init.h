@@ -16,9 +16,6 @@
 #define CEPH_COMMON_INIT_H
 
 #include <deque>
-#include <stdint.h>
-#include <string>
-#include <vector>
 
 #include "common/code_environment.h"
 
@@ -26,10 +23,10 @@ class CephContext;
 class CephInitParameters;
 
 enum common_init_flags_t {
-  // Set up defaults that make sense for an unprivileged deamon
+  // Set up defaults that make sense for an unprivileged daemon
   CINIT_FLAG_UNPRIVILEGED_DAEMON_DEFAULTS = 0x1,
 
-  // By default, don't read a configuration file
+  // By default, don't read a configuration file OR contact mons
   CINIT_FLAG_NO_DEFAULT_CONFIG_FILE = 0x2,
 
   // Don't close stderr (in daemonize)
@@ -40,6 +37,9 @@ enum common_init_flags_t {
 
   // don't drop privileges
   CINIT_FLAG_DEFER_DROP_PRIVILEGES = 0x10,
+
+  // do'nt contact mons for config
+  CINIT_FLAG_NO_MON_CONFIG = 0x20,
 };
 
 /*
@@ -60,8 +60,7 @@ enum common_init_flags_t {
  * Your library may also supply functions to read a configuration file.
  */
 CephContext *common_preinit(const CephInitParameters &iparams,
-			    enum code_environment_t code_env, int flags,
-			    const char *data_dir_option = 0);
+			    enum code_environment_t code_env, int flags);
 
 /* Print out some parse errors. */
 void complain_about_parse_errors(CephContext *cct,

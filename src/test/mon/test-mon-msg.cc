@@ -63,6 +63,7 @@ public:
   explicit MonClientHelper(CephContext *cct_)
     : Dispatcher(cct_),
       cct(cct_),
+      msg(NULL),
       monc(cct_),
       lock("mon-msg-test::lock")
   { }
@@ -218,8 +219,8 @@ class MonMsgTest : public MonClientHelper,
                    public ::testing::Test
 {
 protected:
-  int reply_type;
-  Message *reply_msg;
+  int reply_type = 0;
+  Message *reply_msg = nullptr;
   Mutex lock;
   Cond cond;
 
@@ -232,7 +233,7 @@ public:
     reply_type = -1;
     if (reply_msg) {
       reply_msg->put();
-      reply_msg = NULL;
+      reply_msg = nullptr;
     }
     ASSERT_EQ(init(), 0);
   }
@@ -241,7 +242,7 @@ public:
     shutdown();
     if (reply_msg) {
       reply_msg->put();
-      reply_msg = NULL;
+      reply_msg = nullptr;
     }
   }
 
@@ -279,7 +280,7 @@ public:
     }
 
     if (!reply_msg)
-      dout(20) << __func__ << " reply_msg is NULL" << dendl;
+      dout(20) << __func__ << " reply_msg is nullptr" << dendl;
     else
       dout(20) << __func__ << " reply_msg " << *reply_msg << dendl;
     return reply_msg;
@@ -300,7 +301,6 @@ TEST_F(MonMsgTest, MRouteTest)
   Message *payload = new MGenericMessage(CEPH_MSG_SHUTDOWN);
   MRoute *m = new MRoute;
   m->msg = payload;
-  m->dest = msg->get_myinst();
   Message *r = send_wait_reply(m, CEPH_MSG_SHUTDOWN);
   // we want an error
   ASSERT_NE(IS_ERR(r), 0);
@@ -329,7 +329,7 @@ int main(int argc, char *argv[])
 
   auto cct = global_init(nullptr, args,
 			 CEPH_ENTITY_TYPE_CLIENT, CODE_ENVIRONMENT_UTILITY,
-			 0);
+			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
   common_init_finish(g_ceph_context);
   g_ceph_context->_conf->apply_changes(NULL);
   ::testing::InitGoogleTest(&argc, argv);

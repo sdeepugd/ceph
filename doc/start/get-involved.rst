@@ -12,23 +12,24 @@ These are exciting times in the Ceph community! Get involved!
 | **Blog**             | Check the Ceph Blog_ periodically to keep track | http://ceph.com/community/blog/               |
 |                      | of Ceph progress and important announcements.   |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
-| **Planet Ceph**      | Check the blog aggregation on Planet Ceph for   | http://ceph.com/community/planet-ceph/        |
+| **Planet Ceph**      | Check the blog aggregation on Planet Ceph for   | https://ceph.com/category/planet/             |
 |                      | interesting stories, information and            |                                               |
 |                      | experiences from the community.                 |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
-| **Wiki**             | Check the Ceph Wiki is a source for more        | https://wiki.ceph.com/                        |
+| **Wiki**             | Check the Ceph Wiki is a source for more        | http://wiki.ceph.com/                         |
 |                      | community and development related topics. You   |                                               |
 |                      | can find there information about blueprints,    |                                               |
 |                      | meetups, the Ceph Developer Summits and more.   |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **IRC**              | As you delve into Ceph, you may have questions  |                                               |
-|                      | or feedback for the Ceph development team. Ceph | - **Domain:** ``irc.oftc.net``                |
-|                      | developers are often available on the ``#ceph`` | - **Channels:** ``#ceph`` and ``#ceph-devel`` |
-|                      | IRC channel particularly during daytime hours   |                                               |
-|                      | in the US Pacific Standard Time zone.           |                                               |
-|                      | While ``#ceph`` is a good starting point for    |                                               |
-|                      | cluster operators and users, there is also      |                                               |
-|                      | ``#ceph-devel`` dedicated for Ceph developers.  |                                               |
+|                      | or feedback for the Ceph development team. Ceph | - **Domain:**                                 |
+|                      | developers are often available on the ``#ceph`` |     ``irc.oftc.net``                          |
+|                      | IRC channel particularly during daytime hours   | - **Channels:**                               |
+|                      | in the US Pacific Standard Time zone.           |     ``#ceph``,                                |
+|                      | While ``#ceph`` is a good starting point for    |     ``#ceph-devel``,                          |
+|                      | cluster operators and users, there is also      |     ``#ceph-dashboard``                       |
+|                      | ``#ceph-devel`` and ``#ceph-dashboard``         |                                               |
+|                      | dedicated for Ceph developers.                  |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **User List**        | Ask and answer user-related questions by        |                                               |
 |                      | subscribing to the email list at                | - `User Subscribe`_                           |
@@ -65,7 +66,7 @@ These are exciting times in the Ceph community! Get involved!
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **Source Code**      | If you would like to participate in             |                                               |
 |                      | development, bug fixing, or if you just want    | - http://github.com/ceph/ceph                 |
-|                      | the very latest code for Ceph, you can get it   | - http://ceph.com/download                    |
+|                      | the very latest code for Ceph, you can get it   | - http://download.ceph.com/tarballs/          |
 |                      | at http://github.com. See `Ceph Source Code`_   |                                               |
 |                      | for details on cloning from github.             |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+

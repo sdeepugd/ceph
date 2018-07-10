@@ -28,7 +28,7 @@ ObjectRecorder::ObjectRecorder(librados::IoCtx &ioctx, const std::string &oid,
     m_timer_lock(timer_lock), m_handler(handler), m_order(order),
     m_soft_max_size(1 << m_order), m_flush_interval(flush_interval),
     m_flush_bytes(flush_bytes), m_flush_age(flush_age), m_flush_handler(this),
-    m_append_task(NULL), m_lock(lock), m_append_tid(0), m_pending_bytes(0),
+    m_lock(lock), m_append_tid(0), m_pending_bytes(0),
     m_size(0), m_overflowed(false), m_object_closed(false),
     m_in_flight_flushes(false), m_aio_scheduled(false) {
   m_ioctx.dup(ioctx);
@@ -194,9 +194,11 @@ void ObjectRecorder::cancel_append_task() {
 
 void ObjectRecorder::schedule_append_task() {
   Mutex::Locker locker(m_timer_lock);
-  if (m_append_task == NULL && m_flush_age > 0) {
-    m_append_task = new C_AppendTask(this);
-    m_timer.add_event_after(m_flush_age, m_append_task);
+  if (m_append_task == nullptr && m_flush_age > 0) {
+    m_append_task = m_timer.add_event_after(
+      m_flush_age, new FunctionContext([this](int) {
+	  handle_append_task();
+	}));
   }
 }
 
@@ -355,31 +357,31 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
 }
 
 void ObjectRecorder::send_appends_aio() {
-  AppendBuffers *append_buffers;
-  uint64_t append_tid;
-  {
-    Mutex::Locker locker(*m_lock);
-    append_tid = m_append_tid++;
-    m_in_flight_tids.insert(append_tid);
-
-    // safe to hold pointer outside lock until op is submitted
-    append_buffers = &m_in_flight_appends[append_tid];
-    append_buffers->swap(m_pending_buffers);
-  }
-
-  ldout(m_cct, 10) << __func__ << ": " << m_oid << " flushing journal tid="
-                   << append_tid << dendl;
-  C_AppendFlush *append_flush = new C_AppendFlush(this, append_tid);
-  C_Gather *gather_ctx = new C_Gather(m_cct, append_flush);
-
   librados::ObjectWriteOperation op;
   client::guard_append(&op, m_soft_max_size);
-  for (AppendBuffers::iterator it = append_buffers->begin();
-       it != append_buffers->end(); ++it) {
-    ldout(m_cct, 20) << __func__ << ": flushing " << *it->first
-                     << dendl;
-    op.append(it->second);
-    op.set_op_flags2(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
+  C_Gather *gather_ctx;
+  {
+    Mutex::Locker locker(*m_lock);
+    uint64_t append_tid = m_append_tid++;
+    m_in_flight_tids.insert(append_tid);
+
+    ldout(m_cct, 10) << __func__ << ": " << m_oid << " flushing journal tid="
+                     << append_tid << dendl;
+
+    gather_ctx = new C_Gather(m_cct, new C_AppendFlush(this, append_tid));
+    auto append_buffers = &m_in_flight_appends[append_tid];
+
+    for (auto it = m_pending_buffers.begin(); it != m_pending_buffers.end(); ) {
+      ldout(m_cct, 20) << __func__ << ": flushing " << *it->first << dendl;
+      op.append(it->second);
+      op.set_op_flags2(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
+      m_aio_sent_size += it->second.length();
+      append_buffers->push_back(*it);
+      it = m_pending_buffers.erase(it);
+      if (m_aio_sent_size >= m_soft_max_size) {
+        break;
+      }
+    }
   }
 
   librados::AioCompletion *rados_completion =

@@ -82,8 +82,7 @@ TEST_F(ErasureCodePluginRegistryTest, factory_mutex) {
 TEST_F(ErasureCodePluginRegistryTest, all)
 {
   ErasureCodeProfile profile;
-  const char* env = getenv("CEPH_LIB");
-  string directory(env ? env : ".libs");
+  string directory = g_conf->get_val<std::string>("erasure_code_dir");
   ErasureCodeInterfaceRef erasure_code;
   ErasureCodePluginRegistry &instance = ErasureCodePluginRegistry::instance();
   EXPECT_FALSE(erasure_code);
@@ -127,10 +126,10 @@ TEST_F(ErasureCodePluginRegistryTest, all)
 
 /*
  * Local Variables:
- * compile-command: "cd ../.. ; make -j4 && 
+ * compile-command: "cd ../../../build ; make -j4 &&
  *   make unittest_erasure_code_plugin && 
  *   valgrind --tool=memcheck \
- *      ./unittest_erasure_code_plugin \
+ *      ./bin/unittest_erasure_code_plugin \
  *      --gtest_filter=*.* --log-to-stderr=true --debug-osd=20"
  * End:
  */

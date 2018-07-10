@@ -25,12 +25,12 @@
 struct MOSDScrub : public Message {
 
   static const int HEAD_VERSION = 2;
-  static const int COMPAT_VERSION = 1;
+  static const int COMPAT_VERSION = 2;
 
   uuid_d fsid;
   vector<pg_t> scrub_pgs;
-  bool repair;
-  bool deep;
+  bool repair = false;
+  bool deep = false;
 
   MOSDScrub() : Message(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION) {}
   MOSDScrub(const uuid_d& f, bool r, bool d) :
@@ -58,21 +58,18 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
-    ::encode(fsid, payload);
-    ::encode(scrub_pgs, payload);
-    ::encode(repair, payload);
-    ::encode(deep, payload);
+    using ceph::encode;
+    encode(fsid, payload);
+    encode(scrub_pgs, payload);
+    encode(repair, payload);
+    encode(deep, payload);
   }
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(fsid, p);
-    ::decode(scrub_pgs, p);
-    ::decode(repair, p);
-    if (header.version >= 2) {
-      ::decode(deep, p);
-    } else {
-      deep = false;
-    }
+    auto p = payload.cbegin();
+    decode(fsid, p);
+    decode(scrub_pgs, p);
+    decode(repair, p);
+    decode(deep, p);
   }
 };
 

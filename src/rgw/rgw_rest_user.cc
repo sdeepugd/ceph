@@ -23,7 +23,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "get_user_info"; }
+  const char* name() const override { return "get_user_info"; }
 };
 
 void RGWOp_User_Info::execute()
@@ -32,6 +32,7 @@ void RGWOp_User_Info::execute()
 
   std::string uid_str;
   bool fetch_stats;
+  bool sync_stats;
 
   RESTArgs::get_string(s, "uid", uid_str, &uid_str);
 
@@ -47,8 +48,11 @@ void RGWOp_User_Info::execute()
 
   RESTArgs::get_bool(s, "stats", false, &fetch_stats);
 
+  RESTArgs::get_bool(s, "sync", false, &sync_stats);
+
   op_state.set_user_id(uid);
   op_state.set_fetch_stats(fetch_stats);
+  op_state.set_sync_stats(sync_stats);
 
   http_ret = RGWUserAdminOp_User::info(store, op_state, flusher);
 }
@@ -64,7 +68,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_user"; }
+  const char* name() const override { return "create_user"; }
 };
 
 void RGWOp_User_Create::execute()
@@ -76,6 +80,7 @@ void RGWOp_User_Create::execute()
   std::string secret_key;
   std::string key_type_str;
   std::string caps;
+  std::string tenant_name;
 
   bool gen_key;
   bool suspended;
@@ -96,6 +101,7 @@ void RGWOp_User_Create::execute()
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "key-type", key_type_str, &key_type_str);
   RESTArgs::get_string(s, "user-caps", caps, &caps);
+  RESTArgs::get_string(s, "tenant", tenant_name, &tenant_name);
   RESTArgs::get_bool(s, "generate-key", true, &gen_key);
   RESTArgs::get_bool(s, "suspended", false, &suspended);
   RESTArgs::get_int32(s, "max-buckets", default_max_buckets, &max_buckets);
@@ -106,6 +112,10 @@ void RGWOp_User_Create::execute()
     ldout(s->cct, 0) << "cannot set system flag by non-system user" << dendl;
     http_ret = -EINVAL;
     return;
+  }
+
+  if (!tenant_name.empty()) {
+    uid.tenant = tenant_name;
   }
 
   // TODO: validate required args are passed in. (for eg. uid and display_name here)
@@ -186,7 +196,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "modify_user"; }
+  const char* name() const override { return "modify_user"; }
 };
 
 void RGWOp_User_Modify::execute()
@@ -202,7 +212,8 @@ void RGWOp_User_Modify::execute()
   bool gen_key;
   bool suspended;
   bool system;
-
+  bool email_set;
+  bool quota_set;
   int32_t max_buckets;
 
   RGWUserAdminOpState op_state;
@@ -211,13 +222,13 @@ void RGWOp_User_Modify::execute()
   rgw_user uid(uid_str);
 
   RESTArgs::get_string(s, "display-name", display_name, &display_name);
-  RESTArgs::get_string(s, "email", email, &email);
+  RESTArgs::get_string(s, "email", email, &email, &email_set);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "user-caps", caps, &caps);
   RESTArgs::get_bool(s, "generate-key", false, &gen_key);
   RESTArgs::get_bool(s, "suspended", false, &suspended);
-  RESTArgs::get_int32(s, "max-buckets", RGW_DEFAULT_MAX_BUCKETS, &max_buckets);
+  RESTArgs::get_int32(s, "max-buckets", RGW_DEFAULT_MAX_BUCKETS, &max_buckets, &quota_set);
   RESTArgs::get_string(s, "key-type", key_type_str, &key_type_str);
 
   RESTArgs::get_bool(s, "system", false, &system);
@@ -230,12 +241,15 @@ void RGWOp_User_Modify::execute()
 
   op_state.set_user_id(uid);
   op_state.set_display_name(display_name);
-  op_state.set_user_email(email);
+
+  if (email_set)
+    op_state.set_user_email(email);
+
   op_state.set_caps(caps);
   op_state.set_access_key(access_key);
   op_state.set_secret_key(secret_key);
 
-  if (max_buckets != RGW_DEFAULT_MAX_BUCKETS)
+  if (quota_set)
     op_state.set_max_buckets(max_buckets);
 
   if (gen_key)
@@ -271,7 +285,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_user"; }
+  const char* name() const override { return "remove_user"; }
 };
 
 void RGWOp_User_Remove::execute()
@@ -306,7 +320,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_subuser"; }
+  const char* name() const override { return "create_subuser"; }
 };
 
 void RGWOp_Subuser_Create::execute()
@@ -376,7 +390,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "modify_subuser"; }
+  const char* name() const override { return "modify_subuser"; }
 };
 
 void RGWOp_Subuser_Modify::execute()
@@ -408,8 +422,12 @@ void RGWOp_Subuser_Modify::execute()
 
   op_state.set_user_id(uid);
   op_state.set_subuser(subuser);
-  op_state.set_secret_key(secret_key);
-  op_state.set_gen_secret();
+
+  if (!secret_key.empty())
+    op_state.set_secret_key(secret_key);
+
+  if (gen_secret)
+    op_state.set_gen_secret();
 
   if (!key_type_str.empty()) {
     if (key_type_str.compare("swift") == 0)
@@ -433,7 +451,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_subuser"; }
+  const char* name() const override { return "remove_subuser"; }
 };
 
 void RGWOp_Subuser_Remove::execute()
@@ -470,7 +488,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_access_key"; }
+  const char* name() const override { return "create_access_key"; }
 };
 
 void RGWOp_Key_Create::execute()
@@ -526,7 +544,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_access_key"; }
+  const char* name() const override { return "remove_access_key"; }
 };
 
 void RGWOp_Key_Remove::execute()
@@ -573,7 +591,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "add_user_caps"; }
+  const char* name() const override { return "add_user_caps"; }
 };
 
 void RGWOp_Caps_Add::execute()
@@ -605,7 +623,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_user_caps"; }
+  const char* name() const override { return "remove_user_caps"; }
 };
 
 void RGWOp_Caps_Remove::execute()
@@ -656,7 +674,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "get_quota_info"; }
+  const char* name() const override { return "get_quota_info"; }
 };
 
 
@@ -693,6 +711,11 @@ void RGWOp_Quota_Info::execute()
   if (http_ret < 0)
     return;
 
+  if (!op_state.has_existing_user()) {
+    http_ret = -ERR_NO_SUCH_USER;
+    return;
+  }
+
   RGWUserInfo info;
   string err_msg;
   http_ret = user.info(info, &err_msg);
@@ -723,7 +746,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "set_quota_info"; }
+  const char* name() const override { return "set_quota_info"; }
 };
 
 /**
@@ -822,6 +845,11 @@ void RGWOp_Quota_Set::execute()
   http_ret = user.init(store, op_state);
   if (http_ret < 0) {
     ldout(store->ctx(), 20) << "failed initializing user info: " << http_ret << dendl;
+    return;
+  }
+
+  if (!op_state.has_existing_user()) {
+    http_ret = -ERR_NO_SUCH_USER;
     return;
   }
 

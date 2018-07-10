@@ -35,15 +35,24 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, epoch_t epoch) {
 void Elector::init()
 {
   epoch = mon->store->get(Monitor::MONITOR_NAME, "election_epoch");
-  if (!epoch)
+  if (!epoch) {
+    dout(1) << "init, first boot, initializing epoch at 1 " << dendl;
     epoch = 1;
-  dout(1) << "init, last seen epoch " << epoch << dendl;
+  } else if (epoch % 2) {
+    dout(1) << "init, last seen epoch " << epoch
+	    << ", mid-election, bumping" << dendl;
+    ++epoch;
+    auto t(std::make_shared<MonitorDBStore::Transaction>());
+    t->put(Monitor::MONITOR_NAME, "election_epoch", epoch);
+    mon->store->apply_transaction(t);
+  } else {
+    dout(1) << "init, last seen epoch " << epoch << dendl;
+  }
 }
 
 void Elector::shutdown()
 {
-  if (expire_event)
-    mon->timer.cancel_event(expire_event);
+  cancel_timer();
 }
 
 void Elector::bump_epoch(epoch_t e) 
@@ -84,10 +93,10 @@ void Elector::start()
     int r = mon->store->apply_transaction(t);
     assert(r >= 0);
   }
-  start_stamp = ceph_clock_now();
   electing_me = true;
   acked_me[mon->rank].cluster_features = CEPH_FEATURES_ALL;
   acked_me[mon->rank].mon_features = ceph::features::mon::get_supported();
+  mon->collect_metadata(&acked_me[mon->rank].metadata);
   leader_acked = -1;
 
   // bcast to everyone else
@@ -96,7 +105,7 @@ void Elector::start()
     MMonElection *m =
       new MMonElection(MMonElection::OP_PROPOSE, epoch, mon->monmap);
     m->mon_features = ceph::features::mon::get_supported();
-    mon->messenger->send_message(m, mon->monmap->get_inst(i));
+    mon->send_mon_message(m, i);
   }
   
   reset_timer();
@@ -114,11 +123,11 @@ void Elector::defer(int who)
 
   // ack them
   leader_acked = who;
-  ack_stamp = ceph_clock_now();
   MMonElection *m = new MMonElection(MMonElection::OP_ACK, epoch, mon->monmap);
   m->mon_features = ceph::features::mon::get_supported();
-  m->sharing_bl = mon->get_supported_commands_bl();
-  mon->messenger->send_message(m, mon->monmap->get_inst(who));
+  mon->collect_metadata(&m->metadata);
+
+  mon->send_mon_message(m, who);
   
   // set a timer
   reset_timer(1.0);  // give the leader some extra time to declare victory
@@ -127,6 +136,8 @@ void Elector::defer(int who)
 
 void Elector::reset_timer(double plus)
 {
+  // set the timer
+  cancel_timer();
   /**
    * This class is used as the callback when the expire_event timer fires up.
    *
@@ -140,19 +151,11 @@ void Elector::reset_timer(double plus)
    * as far as we know, we may even be dead); so, just propose ourselves as the
    * Leader.
    */
-  class C_ElectionExpire : public Context {
-    Elector *elector;
-  public:
-    explicit C_ElectionExpire(Elector *e) : elector(e) { }
-    void finish(int r) override {
-      elector->expire();
-    }
-  };
-  // set the timer
-  cancel_timer();
-  expire_event = new C_ElectionExpire(this);
-  mon->timer.add_event_after(g_conf->mon_election_timeout + plus,
-			     expire_event);
+  expire_event = mon->timer.add_event_after(
+    g_conf->mon_election_timeout + plus,
+    new C_MonContext(mon, [this](int) {
+	expire();
+      }));
 }
 
 
@@ -191,12 +194,14 @@ void Elector::victory()
   uint64_t cluster_features = CEPH_FEATURES_ALL;
   mon_feature_t mon_features = ceph::features::mon::get_supported();
   set<int> quorum;
-  for (map<int, elector_features_t>::iterator p = acked_me.begin();
+  map<int,Metadata> metadata;
+  for (map<int, elector_info_t>::iterator p = acked_me.begin();
        p != acked_me.end();
        ++p) {
     quorum.insert(p->first);
     cluster_features &= p->second.cluster_features;
     mon_features &= p->second.mon_features;
+    metadata[p->first] = p->second.metadata;
   }
 
   cancel_timer();
@@ -204,30 +209,23 @@ void Elector::victory()
   assert(epoch % 2 == 1);  // election
   bump_epoch(epoch+1);     // is over!
 
-  // decide my supported commands for peons to advertise
-  const bufferlist *cmds_bl = NULL;
-  const MonCommand *cmds;
-  int cmdsize;
-  mon->get_locally_supported_monitor_commands(&cmds, &cmdsize);
-  cmds_bl = &mon->get_supported_commands_bl();
-  
   // tell everyone!
   for (set<int>::iterator p = quorum.begin();
        p != quorum.end();
        ++p) {
     if (*p == mon->rank) continue;
-    MMonElection *m = new MMonElection(MMonElection::OP_VICTORY, epoch, mon->monmap);
+    MMonElection *m = new MMonElection(MMonElection::OP_VICTORY, epoch,
+				       mon->monmap);
     m->quorum = quorum;
     m->quorum_features = cluster_features;
     m->mon_features = mon_features;
-    m->sharing_bl = *cmds_bl;
-    mon->messenger->send_message(m, mon->monmap->get_inst(*p));
+    m->sharing_bl = mon->get_local_commands_bl(mon_features);
+    mon->send_mon_message(m, *p);
   }
-    
+
   // tell monitor
   mon->win_election(epoch, quorum,
-                    cluster_features, mon_features,
-                    cmds, cmdsize);
+                    cluster_features, mon_features, metadata);
 }
 
 
@@ -338,8 +336,9 @@ void Elector::handle_ack(MonOpRequestRef op)
     // thanks
     acked_me[from].cluster_features = m->get_connection()->get_features();
     acked_me[from].mon_features = m->mon_features;
+    acked_me[from].metadata = m->metadata;
     dout(5) << " so far i have {";
-    for (map<int, elector_features_t>::const_iterator p = acked_me.begin();
+    for (map<int, elector_info_t>::const_iterator p = acked_me.begin();
          p != acked_me.end();
          ++p) {
       if (p != acked_me.begin())
@@ -396,11 +395,10 @@ void Elector::handle_victory(MonOpRequestRef op)
 
   // stash leader's commands
   assert(m->sharing_bl.length());
-  MonCommand *new_cmds;
-  int cmdsize;
-  bufferlist::iterator bi = m->sharing_bl.begin();
-  MonCommand::decode_array(&new_cmds, &cmdsize, bi);
-  mon->set_leader_supported_commands(new_cmds, cmdsize);
+  vector<MonCommand> new_cmds;
+  auto bi = m->sharing_bl.cbegin();
+  MonCommand::decode_vector(new_cmds, bi);
+  mon->set_leader_commands(new_cmds);
 }
 
 void Elector::nak_old_peer(MonOpRequestRef op)
@@ -435,7 +433,7 @@ void Elector::handle_nak(MonOpRequestRef op)
           << dendl;
 
   CompatSet other;
-  bufferlist::iterator bi = m->sharing_bl.begin();
+  auto bi = m->sharing_bl.cbegin();
   other.decode(bi);
   CompatSet diff = Monitor::get_supported_features().unsupported(other);
 

@@ -25,7 +25,7 @@ class MCommand : public Message {
   std::vector<string> cmd;
 
   MCommand()
-    : Message(MSG_MON_COMMAND) {}
+    : Message(MSG_COMMAND) {}
   MCommand(const uuid_d &f)
     : Message(MSG_COMMAND),
       fsid(f) { }
@@ -45,13 +45,14 @@ public:
   }
   
   void encode_payload(uint64_t features) override {
-    ::encode(fsid, payload);
-    ::encode(cmd, payload);
+    using ceph::encode;
+    encode(fsid, payload);
+    encode(cmd, payload);
   }
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(fsid, p);
-    ::decode(cmd, p);
+    auto p = payload.cbegin();
+    decode(fsid, p);
+    decode(cmd, p);
   }
 };
 

@@ -85,16 +85,13 @@ void QueueStrategy::shutdown()
 
 void QueueStrategy::wait()
 {
-  QSThread *thrd;
   lock.Lock();
   assert(stop);
-  while (disp_threads.size()) {
-    thrd = &(disp_threads.front());
-    disp_threads.pop_front();
+  for (auto& thread : threads) {
     lock.Unlock();
 
     // join outside of lock
-    thrd->join();
+    thread->join();
 
     lock.Lock();
   }
@@ -103,14 +100,15 @@ void QueueStrategy::wait()
 
 void QueueStrategy::start()
 {
-  QSThread *thrd;
   assert(!stop);
   lock.Lock();
+  threads.reserve(n_threads);
   for (int ix = 0; ix < n_threads; ++ix) {
     string thread_name = "ms_xio_qs_";
     thread_name.append(std::to_string(ix));
-    thrd = new QSThread(this);
+    auto thrd = std::make_unique<QSThread>(this);
     thrd->create(thread_name.c_str());
+    threads.emplace_back(std::move(thrd));
   }
   lock.Unlock();
 }

@@ -41,11 +41,10 @@
 #include <xmmintrin.h>
 #endif
 
-#include "include/atomic.h"
 #include "include/buffer.h"
 #include "include/encoding.h"
 #include "include/ceph_hash.h"
-#include "include/Spinlock.h"
+#include "include/spinlock.h"
 #include "common/ceph_argparse.h"
 #include "common/Cycles.h"
 #include "common/Cond.h"
@@ -56,6 +55,8 @@
 #include "global/global_init.h"
 
 #include "test/perf_helper.h"
+
+#include <atomic>
 
 using namespace ceph;
 
@@ -95,15 +96,15 @@ void discard(void* value) {
 // Test functions start here
 //----------------------------------------------------------------------
 
-// Measure the cost of atomic_t::compare_and_swap
+// Measure the cost of atomic compare-and-swap
 double atomic_int_cmp()
 {
   int count = 1000000;
-  atomic_t value(11);
-  int test = 11;
+  std::atomic<unsigned> value = { 11 };
+  unsigned int test = 11;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    value.compare_and_swap(test, test+2);
+    value.compare_exchange_strong(test, test+2);
     test += 2;
   }
   uint64_t stop = Cycles::rdtsc();
@@ -111,43 +112,43 @@ double atomic_int_cmp()
   return Cycles::to_seconds(stop - start)/count;
 }
 
-// Measure the cost of atomic_t::inc
+// Measure the cost of incrementing an atomic
 double atomic_int_inc()
 {
   int count = 1000000;
-  atomic_t value(11);
+  std::atomic<int64_t> value = { 11 };
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    value.inc();
+    value++;
   }
   uint64_t stop = Cycles::rdtsc();
   // printf("Final value: %d\n", value.load());
   return Cycles::to_seconds(stop - start)/count;
 }
 
-// Measure the cost of reading an atomic_t
+// Measure the cost of reading an atomic
 double atomic_int_read()
 {
   int count = 1000000;
-  atomic_t value(11);
+  std::atomic<int64_t> value = { 11 };
   int total = 0;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    total += value.read();
+    total += value;
   }
   uint64_t stop = Cycles::rdtsc();
   // printf("Total: %d\n", total);
   return Cycles::to_seconds(stop - start)/count;
 }
 
-// Measure the cost of storing a new value in a atomic_t
+// Measure the cost of storing a new value in an atomic
 double atomic_int_set()
 {
   int count = 1000000;
-  atomic_t value(11);
+  std::atomic<int64_t> value = { 11 };
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    value.set(88);
+    value = 88;
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
@@ -187,18 +188,18 @@ struct DummyBlock {
   int a = 1, b = 2, c = 3, d = 4;
   void encode(bufferlist &bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(a, bl);
-    ::encode(b, bl);
-    ::encode(c, bl);
-    ::encode(d, bl);
+    encode(a, bl);
+    encode(b, bl);
+    encode(c, bl);
+    encode(d, bl);
     ENCODE_FINISH(bl);
   }
-  void decode(bufferlist::iterator &bl) {
+  void decode(bufferlist::const_iterator &bl) {
     DECODE_START(1, bl);
-    ::decode(a, bl);
-    ::decode(b, bl);
-    ::decode(c, bl);
-    ::decode(d, bl);
+    decode(a, bl);
+    decode(b, bl);
+    decode(c, bl);
+    decode(d, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -213,9 +214,9 @@ double buffer_encode_decode()
   for (int i = 0; i < count; i++) {
     bufferlist b;
     DummyBlock dummy_block;
-    ::encode(dummy_block, b);
-    bufferlist::iterator iter = b.begin();
-    ::decode(dummy_block, iter);
+    encode(dummy_block, b);
+    auto iter = b.cbegin();
+    decode(dummy_block, iter);
   }
   uint64_t stop = Cycles::rdtsc();
   return Cycles::to_seconds(stop - start)/count;
@@ -260,18 +261,18 @@ double buffer_encode()
   for (int i = 0; i < count; i++) {
     bufferlist b;
     DummyBlock dummy_block;
-    ::encode(dummy_block, b);
+    encode(dummy_block, b);
     uint64_t start = Cycles::rdtsc();
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
-    ::encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
+    encode(dummy_block, b);
     total += Cycles::rdtsc() - start;
   }
   return Cycles::to_seconds(total)/(count*10);
@@ -307,7 +308,7 @@ double buffer_iterator()
   int sum = 0;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    bufferlist::iterator it = b.begin();
+    auto it = b.cbegin();
     while (!it.end()) {
       sum += (static_cast<const char*>(it.get_current_ptr().c_str()))[it.get_remaining()-1];
       ++it;
@@ -483,12 +484,12 @@ class CenterWorker : public Thread {
 };
 
 class CountEvent: public EventCallback {
-  atomic_t *count;
+  std::atomic<int64_t> *count;
 
  public:
-  explicit CountEvent(atomic_t *atomic): count(atomic) {}
-  void do_request(int id) override {
-    count->dec();
+  explicit CountEvent(std::atomic<int64_t> *atomic): count(atomic) {}
+  void do_request(uint64_t id) override {
+    (*count)--;
   }
 };
 
@@ -497,20 +498,20 @@ double eventcenter_dispatch()
   int count = 100000;
 
   CenterWorker worker(g_ceph_context);
-  atomic_t flag(1);
+  std::atomic<int64_t> flag = { 1 };
   worker.create("evt_center_disp");
   EventCallbackRef count_event(new CountEvent(&flag));
 
   worker.center.dispatch_event_external(count_event);
   // Start a new thread and wait for it to ready.
-  while (flag.read())
+  while (flag)
     usleep(100);
 
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
-    flag.set(1);
+    flag = 1;
     worker.center.dispatch_event_external(count_event);
-    while (flag.read())
+    while (flag)
       ;
   }
   uint64_t stop = Cycles::rdtsc();
@@ -636,11 +637,10 @@ double perf_prefetch()
   uint64_t total_ticks = 0;
   int count = 10;
   char buf[16 * 64];
-  uint64_t start, stop;
 
   for (int i = 0; i < count; i++) {
     PerfHelper::flush_cache();
-    start = Cycles::rdtsc();
+    uint64_t start = Cycles::rdtsc();
     prefetch(&buf[576], 64);
     prefetch(&buf[0],   64);
     prefetch(&buf[512], 64);
@@ -657,7 +657,7 @@ double perf_prefetch()
     prefetch(&buf[832], 64);
     prefetch(&buf[64],  64);
     prefetch(&buf[192], 64);
-    stop = Cycles::rdtsc();
+    uint64_t stop = Cycles::rdtsc();
     total_ticks += stop - start;
   }
   return Cycles::to_seconds(total_ticks) / count / 16;
@@ -736,7 +736,7 @@ double sfence()
 double test_spinlock()
 {
   int count = 1000000;
-  Spinlock lock;
+  ceph::spinlock lock;
   uint64_t start = Cycles::rdtsc();
   for (int i = 0; i < count; i++) {
     lock.lock();
@@ -784,8 +784,9 @@ double perf_timer()
   uint64_t start = Cycles::rdtsc();
   Mutex::Locker l(lock);
   for (int i = 0; i < count; i++) {
-    timer.add_event_after(12345, c[i]);
-    timer.cancel_event(c[i]);
+    if (timer.add_event_after(12345, c[i])) {
+      timer.cancel_event(c[i]);
+    }
   }
   uint64_t stop = Cycles::rdtsc();
   delete[] c;
@@ -1019,7 +1020,8 @@ int main(int argc, char *argv[])
   argv_to_vec(argc, (const char **)argv, args);
 
   auto cct = global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT,
-			 CODE_ENVIRONMENT_UTILITY, 0);
+			 CODE_ENVIRONMENT_UTILITY,
+			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
   common_init_finish(g_ceph_context);
   Cycles::init();
 

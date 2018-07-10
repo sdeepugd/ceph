@@ -8,14 +8,8 @@
  *
  */
 
-#include <algorithm>
-#include <cstring>
-#include <cstdlib>
 #include <errno.h>
-#include <iostream>
 #include <map>
-#include <sstream>
-#include <vector>
 
 #include "include/types.h"
 #include "include/utime.h"
@@ -40,34 +34,6 @@ CLS_NAME(lock)
 
 #define LOCK_PREFIX    "lock."
 
-typedef struct lock_info_s {
-  map<locker_id_t, locker_info_t> lockers; // map of lockers
-  ClsLockType lock_type;                              // lock type (exclusive / shared)
-  string tag;                                         // tag: operations on lock can only succeed with this tag
-                                                      //      as long as set of non expired lockers
-                                                      //      is bigger than 0.
-
-  void encode(bufferlist &bl, uint64_t features) const {
-    ENCODE_START(1, 1, bl);
-    ::encode(lockers, bl, features);
-    uint8_t t = (uint8_t)lock_type;
-    ::encode(t, bl);
-    ::encode(tag, bl);
-    ENCODE_FINISH(bl);
-  }
-  void decode(bufferlist::iterator &bl) {
-    DECODE_START_LEGACY_COMPAT_LEN(1, 1, 1, bl);
-    ::decode(lockers, bl);
-    uint8_t t;
-    ::decode(t, bl);
-    lock_type = (ClsLockType)t; 
-    ::decode(tag, bl);
-    DECODE_FINISH(bl);
-  }
-  lock_info_s() : lock_type(LOCK_NONE) {}
-} lock_info_t;
-WRITE_CLASS_ENCODER_FEATURES(lock_info_t)
-
 static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t *lock)
 {
   bufferlist bl;
@@ -87,8 +53,8 @@ static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t 
   }
 
   try {
-    bufferlist::iterator it = bl.begin();
-    ::decode(*lock, it);
+    auto it = bl.cbegin();
+    decode(*lock, it);
   } catch (const buffer::error &err) {
     CLS_ERR("error decoding %s", key.c_str());
     return -EIO;
@@ -118,11 +84,12 @@ static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t 
 
 static int write_lock(cls_method_context_t hctx, const string& name, const lock_info_t& lock)
 {
+  using ceph::encode;
   string key = LOCK_PREFIX;
   key.append(name);
 
   bufferlist lock_bl;
-  ::encode(lock, lock_bl, cls_get_client_features(hctx));
+  encode(lock, lock_bl, cls_get_client_features(hctx));
 
   int r = cls_cxx_setxattr(hctx, key.c_str(), &lock_bl);
   if (r < 0)
@@ -247,8 +214,8 @@ static int lock_op(cls_method_context_t hctx,
   CLS_LOG(20, "lock_op");
   cls_lock_lock_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error &err) {
     return -EINVAL;
   }
@@ -312,8 +279,8 @@ static int unlock_op(cls_method_context_t hctx,
   CLS_LOG(20, "unlock_op");
   cls_lock_unlock_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error& err) {
     return -EINVAL;
   }
@@ -340,8 +307,8 @@ static int break_lock(cls_method_context_t hctx,
   CLS_LOG(20, "break_lock");
   cls_lock_break_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error& err) {
     return -EINVAL;
   }
@@ -366,8 +333,8 @@ static int get_info(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   CLS_LOG(20, "get_info");
   cls_lock_get_info_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error& err) {
     return -EINVAL;
   }
@@ -389,7 +356,7 @@ static int get_info(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   ret.lock_type = linfo.lock_type;
   ret.tag = linfo.tag;
 
-  ::encode(ret, *out, cls_get_client_features(hctx));
+  encode(ret, *out, cls_get_client_features(hctx));
 
   return 0;
 }
@@ -427,7 +394,7 @@ static int list_locks(cls_method_context_t hctx, bufferlist *in, bufferlist *out
     }
   }
 
-  ::encode(ret, *out);
+  encode(ret, *out);
 
   return 0;
 }
@@ -449,8 +416,8 @@ int assert_locked(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   cls_lock_assert_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error& err) {
     return -EINVAL;
   }
@@ -521,8 +488,8 @@ int set_cookie(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   cls_lock_set_cookie_op op;
   try {
-    bufferlist::iterator iter = in->begin();
-    ::decode(op, iter);
+    auto iter = in->cbegin();
+    decode(op, iter);
   } catch (const buffer::error& err) {
     return -EINVAL;
   }

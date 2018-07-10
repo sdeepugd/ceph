@@ -17,7 +17,6 @@
 
 #include <string>
 #include <vector>
-#include "include/memory.h"
 
 #include "osd/osd_types.h"
 #include "include/object.h"
@@ -77,7 +76,7 @@ protected:
 
   RWLock access_lock;
   /// Type of returned paths
-  typedef ceph::shared_ptr<Path> IndexedPath;
+  typedef std::shared_ptr<Path> IndexedPath;
 
   static IndexedPath get_testing_path(string path, coll_t collection) {
     return std::make_shared<Path>(path, collection);
@@ -191,7 +190,10 @@ protected:
       uint64_t expected_num_objs  ///< [in] expected number of objects this collection has
       ) { ceph_abort(); return 0; }
 
-  virtual int apply_layout_settings() { ceph_abort(); return 0; }
+  virtual int apply_layout_settings(int target_level) { ceph_abort(); return 0; }
+
+  /// Read index-wide settings (should be called after construction)
+  virtual int read_settings() { return 0; }
 
   /// Virtual destructor
   virtual ~CollectionIndex() {}

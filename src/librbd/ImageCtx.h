@@ -15,13 +15,13 @@
 #include "common/Readahead.h"
 #include "common/RWLock.h"
 #include "common/snap_types.h"
+#include "common/zipkin_trace.h"
 
 #include "include/buffer_fwd.h"
 #include "include/rbd/librbd.hpp"
 #include "include/rbd_types.h"
 #include "include/types.h"
 #include "include/xlist.h"
-#include "osdc/ObjectCacher.h"
 
 #include "cls/rbd/cls_rbd_types.h"
 #include "cls/rbd/cls_rbd_client.h"
@@ -37,7 +37,6 @@ class SafeTimer;
 
 namespace librbd {
 
-  class AsyncOperation;
   template <typename> class ExclusiveLock;
   template <typename> class ImageState;
   template <typename> class ImageWatcher;
@@ -45,14 +44,15 @@ namespace librbd {
   class LibrbdAdminSocketHook;
   template <typename> class ObjectMap;
   template <typename> class Operations;
-  class LibrbdWriteback;
 
   namespace cache { struct ImageCache; }
   namespace exclusive_lock { struct Policy; }
   namespace io {
   class AioCompletion;
-  class ImageRequestWQ;
-  class CopyupRequest;
+  class AsyncOperation;
+  template <typename> class CopyupRequest;
+  template <typename> class ImageRequestWQ;
+  template <typename> class ObjectDispatcher;
   }
   namespace journal { struct Policy; }
 
@@ -73,7 +73,6 @@ namespace librbd {
     bool snap_exists; // false if our snap_id was deleted
     // whether the image was opened read-only. cannot be changed after opening
     bool read_only;
-    bool flush_encountered;
 
     std::map<rados::cls::lock::locker_id_t,
 	     rados::cls::lock::locker_info_t> lockers;
@@ -90,7 +89,7 @@ namespace librbd {
     /**
      * Lock ordering:
      *
-     * owner_lock, md_lock, cache_lock, snap_lock, parent_lock,
+     * owner_lock, md_lock, snap_lock, parent_lock,
      * object_map_lock, async_op_lock
      */
     RWLock owner_lock; // protects exclusive lock leadership updates
@@ -98,12 +97,10 @@ namespace librbd {
                    // isn't guarded by other locks below, and blocks writes
                    // when held exclusively, so snapshots can be consistent.
                    // Fields guarded include:
-                   // flush_encountered
                    // total_bytes_read
                    // exclusive_locked
                    // lock_tag
                    // lockers
-    Mutex cache_lock; // used as client_lock for the ObjectCacher
     RWLock snap_lock; // protects snapshot-related member variables,
                       // features (and associated helper classes), and flags
     RWLock parent_lock; // protects parent_md and parent
@@ -124,23 +121,24 @@ namespace librbd {
     std::string id; // only used for new-format images
     ParentInfo parent_md;
     ImageCtx *parent;
+    ImageCtx *child = nullptr;
     cls::rbd::GroupSpec group_spec;
     uint64_t stripe_unit, stripe_count;
     uint64_t flags;
+    uint64_t op_features = 0;
+    bool operations_disabled = false;
+    utime_t create_timestamp;
 
     file_layout_t layout;
 
     cache::ImageCache *image_cache = nullptr;
-    ObjectCacher *object_cacher;
-    LibrbdWriteback *writeback_handler;
-    ObjectCacher::ObjectSet *object_set;
 
     Readahead readahead;
     uint64_t total_bytes_read;
 
-    std::map<uint64_t, io::CopyupRequest*> copyup_list;
+    std::map<uint64_t, io::CopyupRequest<ImageCtx>*> copyup_list;
 
-    xlist<AsyncOperation*> async_ops;
+    xlist<io::AsyncOperation*> async_ops;
     xlist<AsyncRequest<>*> async_requests;
     std::list<Context*> async_requests_waiters;
 
@@ -152,7 +150,9 @@ namespace librbd {
 
     xlist<operation::ResizeRequest<ImageCtx>*> resize_reqs;
 
-    io::ImageRequestWQ *io_work_queue;
+    io::ImageRequestWQ<ImageCtx> *io_work_queue;
+    io::ObjectDispatcher<ImageCtx> *io_object_dispatcher = nullptr;
+
     xlist<io::AioCompletion*> completed_reqs;
     EventSocket event_socket;
 
@@ -174,6 +174,7 @@ namespace librbd {
     bool localize_snap_reads;
     bool balance_parent_reads;
     bool localize_parent_reads;
+    uint64_t sparse_read_threshold_bytes;
     uint32_t readahead_trigger_requests;
     uint64_t readahead_max_bytes;
     uint64_t readahead_disable_after_bytes;
@@ -192,13 +193,23 @@ namespace librbd {
     uint32_t journal_max_payload_bytes;
     int journal_max_concurrent_object_sets;
     bool mirroring_resync_after_disconnect;
+    uint64_t mirroring_delete_delay;
     int mirroring_replay_delay;
     bool skip_partial_discard;
+    bool blkin_trace_all;
+    uint64_t qos_iops_limit;
+    uint64_t qos_bps_limit;
+    uint64_t qos_read_iops_limit;
+    uint64_t qos_write_iops_limit;
+    uint64_t qos_read_bps_limit;
+    uint64_t qos_write_bps_limit;
 
     LibrbdAdminSocketHook *asok_hook;
 
     exclusive_lock::Policy *exclusive_lock_policy = nullptr;
     journal::Policy *journal_policy = nullptr;
+
+    ZTracer::Endpoint trace_endpoint;
 
     static bool _filter_metadata_confs(const string &prefix, std::map<string, bool> &configs,
                                        const map<string, bufferlist> &pairs, map<string, bufferlist> *res);
@@ -228,11 +239,10 @@ namespace librbd {
     void perf_stop();
     void set_read_flag(unsigned flag);
     int get_read_flags(librados::snap_t snap_id);
-    int snap_set(cls::rbd::SnapshotNamespace in_snap_namespace,
-		 std::string in_snap_name);
+    int snap_set(uint64_t snap_id);
     void snap_unset();
-    librados::snap_t get_snap_id(cls::rbd::SnapshotNamespace in_snap_namespace,
-				 std::string in_snap_name) const;
+    librados::snap_t get_snap_id(const cls::rbd::SnapshotNamespace& in_snap_namespace,
+                                 const std::string& in_snap_name) const;
     const SnapInfo* get_snap_info(librados::snap_t in_snap_id) const;
     int get_snap_name(librados::snap_t in_snap_id,
 		      std::string *out_snap_name) const;
@@ -251,6 +261,7 @@ namespace librbd {
     uint64_t get_stripe_unit() const;
     uint64_t get_stripe_count() const;
     uint64_t get_stripe_period() const;
+    utime_t get_create_timestamp() const;
 
     void add_snap(cls::rbd::SnapshotNamespace in_snap_namespace,
 		  std::string in_snap_name,
@@ -265,9 +276,13 @@ namespace librbd {
     bool test_features(uint64_t test_features) const;
     bool test_features(uint64_t test_features,
                        const RWLock &in_snap_lock) const;
+    bool test_op_features(uint64_t op_features) const;
+    bool test_op_features(uint64_t op_features,
+                          const RWLock &in_snap_lock) const;
     int get_flags(librados::snap_t in_snap_id, uint64_t *flags) const;
-    bool test_flags(uint64_t test_flags) const;
-    bool test_flags(uint64_t test_flags, const RWLock &in_snap_lock) const;
+    int test_flags(uint64_t test_flags, bool *flags_set) const;
+    int test_flags(uint64_t test_flags, const RWLock &in_snap_lock,
+                   bool *flags_set) const;
     int update_flags(librados::snap_t in_snap_id, uint64_t flag, bool enabled);
 
     const ParentInfo* get_parent_info(librados::snap_t in_snap_id) const;
@@ -276,19 +291,6 @@ namespace librbd {
     uint64_t get_parent_snap_id(librados::snap_t in_snap_id) const;
     int get_parent_overlap(librados::snap_t in_snap_id,
 			   uint64_t *overlap) const;
-    void aio_read_from_cache(object_t o, uint64_t object_no, bufferlist *bl,
-			     size_t len, uint64_t off, Context *onfinish,
-			     int fadvise_flags);
-    void write_to_cache(object_t o, const bufferlist& bl, size_t len,
-			uint64_t off, Context *onfinish, int fadvise_flags,
-                        uint64_t journal_tid);
-    void user_flushed();
-    void flush_cache(Context *onfinish);
-    void shut_down_cache(Context *on_finish);
-    int invalidate_cache(bool purge_on_error);
-    void invalidate_cache(bool purge_on_error, Context *on_finish);
-    void clear_nonexistence_cache();
-    bool is_cache_empty();
     void register_watch(Context *on_finish);
     uint64_t prune_parent_extents(vector<pair<uint64_t,uint64_t> >& objectx,
 				  uint64_t overlap);
@@ -296,13 +298,11 @@ namespace librbd {
     void flush_async_operations();
     void flush_async_operations(Context *on_finish);
 
-    int flush();
-    void flush(Context *on_safe);
-
     void cancel_async_requests();
     void cancel_async_requests(Context *on_finish);
 
-    void apply_metadata(const std::map<std::string, bufferlist> &meta);
+    void apply_metadata(const std::map<std::string, bufferlist> &meta,
+                        bool thread_safe);
 
     ExclusiveLock<ImageCtx> *create_exclusive_lock();
     ObjectMap<ImageCtx> *create_object_map(uint64_t snap_id);
@@ -320,6 +320,8 @@ namespace librbd {
 
     journal::Policy *get_journal_policy() const;
     void set_journal_policy(journal::Policy *policy);
+
+    bool is_writeback_cache_enabled() const;
 
     static void get_thread_pool_instance(CephContext *cct,
                                          ThreadPool **thread_pool,

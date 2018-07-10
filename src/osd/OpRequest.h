@@ -13,15 +13,7 @@
 
 #ifndef OPREQUEST_H_
 #define OPREQUEST_H_
-#include <sstream>
-#include <stdint.h>
-#include <vector>
 
-#include <include/utime.h>
-#include "common/Mutex.h"
-#include "include/xlist.h"
-#include "msg/Message.h"
-#include "include/memory.h"
 #include "osd/osd_types.h"
 #include "common/TrackedOp.h"
 
@@ -59,17 +51,20 @@ struct OpRequest : public TrackedOp {
   void set_force_rwordered();
 
   struct ClassInfo {
-    ClassInfo(const std::string& name, bool read, bool write,
-        bool whitelisted) :
-      name(name), read(read), write(write), whitelisted(whitelisted)
+    ClassInfo(std::string&& class_name, std::string&& method_name,
+              bool read, bool write, bool whitelisted) :
+      class_name(std::move(class_name)), method_name(std::move(method_name)),
+      read(read), write(write), whitelisted(whitelisted)
     {}
-    const std::string name;
+    const std::string class_name;
+    const std::string method_name;
     const bool read, write, whitelisted;
   };
 
-  void add_class(const std::string& name, bool read, bool write,
-      bool whitelisted) {
-    classes_.emplace_back(name, read, write, whitelisted);
+  void add_class(std::string&& class_name, std::string&& method_name,
+                 bool read, bool write, bool whitelisted) {
+    classes_.emplace_back(std::move(class_name), std::move(method_name),
+                          read, write, whitelisted);
   }
 
   std::vector<ClassInfo> classes() const {
@@ -85,6 +80,7 @@ struct OpRequest : public TrackedOp {
 private:
   Message *request; /// the logical request we are tracking
   osd_reqid_t reqid;
+  entity_inst_t req_src_inst;
   uint8_t hit_flag_points;
   uint8_t latest_flag_point;
   utime_t dequeued_time;
@@ -102,6 +98,7 @@ private:
 protected:
   void _dump_op_descriptor_unlocked(ostream& stream) const override;
   void _unregistered() override;
+  bool filter_out(const set<string>& filters) override;
 
 public:
   ~OpRequest() override {
@@ -110,6 +107,7 @@ public:
 
   bool check_send_map = true; ///< true until we check if sender needs a map
   epoch_t sent_epoch = 0;     ///< client's map epoch
+  epoch_t min_epoch = 0;      ///< min epoch needed to handle this msg
 
   bool hitset_inserted;
   const Message *get_req() const { return request; }

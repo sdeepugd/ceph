@@ -20,10 +20,7 @@
 #include "common/ceph_time.h"
 #include "rgw_formats.h"
 
-
-using namespace std;
-
-// define as static when RGWBucket implementation compete
+// define as static when RGWBucket implementation completes
 extern void rgw_get_buckets_obj(const rgw_user& user_id, string& buckets_obj_id);
 
 extern int rgw_bucket_store_info(RGWRados *store, const string& bucket_name, bufferlist& bl, bool exclusive,
@@ -49,11 +46,14 @@ extern int rgw_bucket_delete_bucket_obj(RGWRados *store,
 extern int rgw_bucket_sync_user_stats(RGWRados *store, const rgw_user& user_id, const RGWBucketInfo& bucket_info);
 extern int rgw_bucket_sync_user_stats(RGWRados *store, const string& tenant_name, const string& bucket_name);
 
-extern void rgw_make_bucket_entry_name(const string& tenant_name,
-                                       const string& bucket_name,
-                                       string& bucket_entry);
-extern string rgw_make_bucket_entry_name(const string& tenant_name,
-                                       const string& bucket_name);
+extern std::string rgw_make_bucket_entry_name(const std::string& tenant_name,
+                                              const std::string& bucket_name);
+static inline void rgw_make_bucket_entry_name(const string& tenant_name,
+                                              const string& bucket_name,
+                                              std::string& bucket_entry) {
+  bucket_entry = rgw_make_bucket_entry_name(tenant_name, bucket_name);
+}
+
 extern void rgw_parse_url_bucket(const string& bucket,
                                  const string& auth_tenant,
                                  string &tenant_name, string &bucket_name);
@@ -104,15 +104,21 @@ public:
  */
 class RGWUserBuckets
 {
-  map<string, RGWBucketEnt> buckets;
+  std::map<std::string, RGWBucketEnt> buckets;
 
 public:
-  RGWUserBuckets() {}
+  RGWUserBuckets() = default;
+  RGWUserBuckets(RGWUserBuckets&&) = default;
+
+  RGWUserBuckets& operator=(const RGWUserBuckets&) = default;
+
   void encode(bufferlist& bl) const {
-    ::encode(buckets, bl);
+    using ceph::encode;
+    encode(buckets, bl);
   }
-  void decode(bufferlist::iterator& bl) {
-    ::decode(buckets, bl);
+  void decode(bufferlist::const_iterator& bl) {
+    using ceph::decode;
+    decode(buckets, bl);
   }
   /**
    * Check if the user owns a bucket by the given name.
@@ -172,7 +178,11 @@ extern int rgw_read_user_buckets(RGWRados *store,
 				 bool* is_truncated,
                                  uint64_t default_amount = 1000);
 
-extern int rgw_link_bucket(RGWRados *store, const rgw_user& user_id, rgw_bucket& bucket, real_time creation_time, bool update_entrypoint = true);
+extern int rgw_link_bucket(RGWRados* store,
+                           const rgw_user& user_id,
+                           rgw_bucket& bucket,
+                           ceph::real_time creation_time,
+                           bool update_entrypoint = true);
 extern int rgw_unlink_bucket(RGWRados *store, const rgw_user& user_id,
                              const string& tenant_name, const string& bucket_name, bool update_entrypoint = true);
 
@@ -199,9 +209,11 @@ struct RGWBucketAdminOpState {
   bool fix_index;
   bool delete_child_objects;
   bool bucket_stored;
-  int max_aio;
+  int max_aio = 0;
 
   rgw_bucket bucket;
+
+  RGWQuotaInfo quota;
 
   void set_fetch_stats(bool value) { stat_buckets = value; }
   void set_check_objects(bool value) { check_objects = value; }
@@ -210,16 +222,20 @@ struct RGWBucketAdminOpState {
 
   void set_max_aio(int value) { max_aio = value; }
 
-  void set_user_id(rgw_user& user_id) {
+  void set_user_id(const rgw_user& user_id) {
     if (!user_id.empty())
       uid = user_id;
   }
-  void set_bucket_name(std::string& bucket_str) {
+  void set_bucket_name(const std::string& bucket_str) {
     bucket_name = bucket_str; 
   }
   void set_object(std::string& object_str) {
     object_name = object_str;
   }
+  void set_quota(RGWQuotaInfo& value) {
+    quota = value;
+  }
+
 
   rgw_user& get_user_id() { return uid; }
   std::string& get_user_display_name() { return display_name; }
@@ -274,7 +290,7 @@ public:
   int init(RGWRados *storage, RGWBucketAdminOpState& op_state);
 
   int check_bad_index_multipart(RGWBucketAdminOpState& op_state,
-          list<rgw_obj_index_key>& objs_to_unlink, std::string *err_msg = NULL);
+              RGWFormatterFlusher& flusher, std::string *err_msg = NULL);
 
   int check_object_index(RGWBucketAdminOpState& op_state,
                          RGWFormatterFlusher& flusher,
@@ -288,6 +304,7 @@ public:
   int remove(RGWBucketAdminOpState& op_state, bool bypass_gc = false, bool keep_index_consistent = true, std::string *err_msg = NULL);
   int link(RGWBucketAdminOpState& op_state, std::string *err_msg = NULL);
   int unlink(RGWBucketAdminOpState& op_state, std::string *err_msg = NULL);
+  int set_quota(RGWBucketAdminOpState& op_state, std::string *err_msg = NULL);
 
   int remove_object(RGWBucketAdminOpState& op_state, std::string *err_msg = NULL);
   int policy_bl_to_stream(bufferlist& bl, ostream& o);
@@ -319,6 +336,7 @@ public:
 			 const std::list<std::string>& user_ids,
 			 RGWFormatterFlusher& flusher,
 			 bool warnings_only = false);
+  static int set_quota(RGWRados *store, RGWBucketAdminOpState& op_state);
 };
 
 
@@ -335,19 +353,19 @@ struct rgw_data_change {
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
     uint8_t t = (uint8_t)entity_type;
-    ::encode(t, bl);
-    ::encode(key, bl);
-    ::encode(timestamp, bl);
+    encode(t, bl);
+    encode(key, bl);
+    encode(timestamp, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
      DECODE_START(1, bl);
      uint8_t t;
-     ::decode(t, bl);
+     decode(t, bl);
      entity_type = (DataLogEntityType)t;
-     ::decode(key, bl);
-     ::decode(timestamp, bl);
+     decode(key, bl);
+     decode(timestamp, bl);
      DECODE_FINISH(bl);
   }
 
@@ -363,17 +381,17 @@ struct rgw_data_change_log_entry {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(log_id, bl);
-    ::encode(log_timestamp, bl);
-    ::encode(entry, bl);
+    encode(log_id, bl);
+    encode(log_timestamp, bl);
+    encode(entry, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
      DECODE_START(1, bl);
-     ::decode(log_id, bl);
-     ::decode(log_timestamp, bl);
-     ::decode(entry, bl);
+     decode(log_id, bl);
+     decode(log_timestamp, bl);
+     decode(entry, bl);
      DECODE_FINISH(bl);
   }
 
@@ -401,7 +419,7 @@ class RGWDataChangesLog {
   RWLock modified_lock;
   map<int, set<string> > modified_shards;
 
-  atomic_t down_flag;
+  std::atomic<bool> down_flag = { false };
 
   struct ChangeStatus {
     real_time cur_expiration;
@@ -419,7 +437,7 @@ class RGWDataChangesLog {
     }
   };
 
-  typedef ceph::shared_ptr<ChangeStatus> ChangeStatusPtr;
+  typedef std::shared_ptr<ChangeStatus> ChangeStatusPtr;
 
   lru_map<rgw_bucket_shard, ChangeStatusPtr> changes;
 

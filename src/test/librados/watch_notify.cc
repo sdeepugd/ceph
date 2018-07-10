@@ -173,7 +173,7 @@ TEST_P(LibRadosWatchNotifyPP, WatchNotify) {
   ASSERT_EQ(0, ioctx.watch("foo", 0, &handle, &ctx));
   std::list<obj_watch_t> watches;
   ASSERT_EQ(0, ioctx.list_watchers("foo", &watches));
-  ASSERT_EQ(watches.size(), 1u);
+  ASSERT_EQ(1u, watches.size());
   bufferlist bl2;
   ASSERT_EQ(0, ioctx.notify("foo", 0, bl2));
   TestAlarm alarm;
@@ -209,7 +209,7 @@ TEST_F(LibRadosWatchNotifyECPP, WatchNotify) {
   ASSERT_EQ(0, ioctx.watch("foo", 0, &handle, &ctx));
   std::list<obj_watch_t> watches;
   ASSERT_EQ(0, ioctx.list_watchers("foo", &watches));
-  ASSERT_EQ(watches.size(), 1u);
+  ASSERT_EQ(1u, watches.size());
   bufferlist bl2;
   ASSERT_EQ(0, ioctx.notify("foo", 0, bl2));
   TestAlarm alarm;
@@ -283,6 +283,7 @@ TEST_F(LibRadosWatchNotify, Watch2Delete) {
   ASSERT_EQ(-ENOTCONN, notify_err);
   ASSERT_EQ(-ENOTCONN, rados_watch_check(ioctx, handle));
   rados_unwatch2(ioctx, handle);
+  rados_watch_flush(cluster);
 }
 
 TEST_F(LibRadosWatchNotify, AioWatchDelete) {
@@ -343,9 +344,9 @@ TEST_F(LibRadosWatchNotify, WatchNotify2) {
   reply.append(reply_buf, reply_buf_len);
   std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  bufferlist::iterator reply_p = reply.begin();
-  ::decode(reply_map, reply_p);
-  ::decode(missed_map, reply_p);
+  auto reply_p = reply.cbegin();
+  decode(reply_map, reply_p);
+  decode(missed_map, reply_p);
   ASSERT_EQ(1u, reply_map.size());
   ASSERT_EQ(0u, missed_map.size());
   ASSERT_EQ(1u, notify_cookies.size());
@@ -364,6 +365,7 @@ TEST_F(LibRadosWatchNotify, WatchNotify2) {
   ASSERT_EQ(0u, reply_buf_len);
 
   rados_unwatch2(ioctx, handle);
+  rados_watch_flush(cluster);
 }
 
 TEST_F(LibRadosWatchNotify, AioWatchNotify2) {
@@ -393,9 +395,9 @@ TEST_F(LibRadosWatchNotify, AioWatchNotify2) {
   reply.append(reply_buf, reply_buf_len);
   std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  bufferlist::iterator reply_p = reply.begin();
-  ::decode(reply_map, reply_p);
-  ::decode(missed_map, reply_p);
+  auto reply_p = reply.cbegin();
+  decode(reply_map, reply_p);
+  decode(missed_map, reply_p);
   ASSERT_EQ(1u, reply_map.size());
   ASSERT_EQ(0u, missed_map.size());
   ASSERT_EQ(1u, notify_cookies.size());
@@ -447,9 +449,9 @@ TEST_F(LibRadosWatchNotify, AioNotify) {
   reply.append(reply_buf, reply_buf_len);
   std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  bufferlist::iterator reply_p = reply.begin();
-  ::decode(reply_map, reply_p);
-  ::decode(missed_map, reply_p);
+  auto reply_p = reply.cbegin();
+  decode(reply_map, reply_p);
+  decode(missed_map, reply_p);
   ASSERT_EQ(1u, reply_map.size());
   ASSERT_EQ(0u, missed_map.size());
   ASSERT_EQ(1u, notify_cookies.size());
@@ -471,6 +473,7 @@ TEST_F(LibRadosWatchNotify, AioNotify) {
   ASSERT_EQ(0u, reply_buf_len);
 
   rados_unwatch2(ioctx, handle);
+  rados_watch_flush(cluster);
 }
 
 TEST_P(LibRadosWatchNotifyPP, WatchNotify2) {
@@ -491,11 +494,11 @@ TEST_P(LibRadosWatchNotifyPP, WatchNotify2) {
   ASSERT_EQ(watches.size(), 1u);
   bufferlist bl2, bl_reply;
   ASSERT_EQ(0, ioctx.notify2(notify_oid, bl2, 300000, &bl_reply));
-  bufferlist::iterator p = bl_reply.begin();
+  auto p = bl_reply.cbegin();
   std::map<std::pair<uint64_t,uint64_t>,bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  ::decode(reply_map, p);
-  ::decode(missed_map, p);
+  decode(reply_map, p);
+  decode(missed_map, p);
   ASSERT_EQ(1u, notify_cookies.size());
   ASSERT_EQ(1u, notify_cookies.count(handle));
   ASSERT_EQ(1u, reply_map.size());
@@ -530,11 +533,11 @@ TEST_P(LibRadosWatchNotifyPP, AioWatchNotify2) {
   ASSERT_EQ(watches.size(), 1u);
   bufferlist bl2, bl_reply;
   ASSERT_EQ(0, ioctx.notify2(notify_oid, bl2, 300000, &bl_reply));
-  bufferlist::iterator p = bl_reply.begin();
+  auto p = bl_reply.cbegin();
   std::map<std::pair<uint64_t,uint64_t>,bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  ::decode(reply_map, p);
-  ::decode(missed_map, p);
+  decode(reply_map, p);
+  decode(missed_map, p);
   ASSERT_EQ(1u, notify_cookies.size());
   ASSERT_EQ(1u, notify_cookies.count(handle));
   ASSERT_EQ(1u, reply_map.size());
@@ -572,11 +575,11 @@ TEST_P(LibRadosWatchNotifyPP, AioNotify) {
   ASSERT_EQ(0, comp->wait_for_complete());
   ASSERT_EQ(0, comp->get_return_value());
   comp->release();
-  bufferlist::iterator p = bl_reply.begin();
+  auto p = bl_reply.cbegin();
   std::map<std::pair<uint64_t,uint64_t>,bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  ::decode(reply_map, p);
-  ::decode(missed_map, p);
+  decode(reply_map, p);
+  decode(missed_map, p);
   ASSERT_EQ(1u, notify_cookies.size());
   ASSERT_EQ(1u, notify_cookies.count(handle));
   ASSERT_EQ(1u, reply_map.size());
@@ -585,6 +588,7 @@ TEST_P(LibRadosWatchNotifyPP, AioNotify) {
   ASSERT_EQ(0u, missed_map.size());
   ASSERT_GT(ioctx.watch_check(handle), 0);
   ioctx.unwatch2(handle);
+  cluster.watch_flush();
 }
 
 // --
@@ -617,9 +621,9 @@ TEST_F(LibRadosWatchNotify, WatchNotify2Multi) {
   reply.append(reply_buf, reply_buf_len);
   std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  bufferlist::iterator reply_p = reply.begin();
-  ::decode(reply_map, reply_p);
-  ::decode(missed_map, reply_p);
+  auto reply_p = reply.cbegin();
+  decode(reply_map, reply_p);
+  decode(missed_map, reply_p);
   ASSERT_EQ(2u, reply_map.size());
   ASSERT_EQ(5u, reply_map.begin()->second.length());
   ASSERT_EQ(0u, missed_map.size());
@@ -632,6 +636,7 @@ TEST_F(LibRadosWatchNotify, WatchNotify2Multi) {
   rados_buffer_free(reply_buf);
   rados_unwatch2(ioctx, handle1);
   rados_unwatch2(ioctx, handle2);
+  rados_watch_flush(cluster);
 }
 
 // --
@@ -661,9 +666,9 @@ TEST_F(LibRadosWatchNotify, WatchNotify2Timeout) {
     reply.append(reply_buf, reply_buf_len);
     std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
     std::set<std::pair<uint64_t,uint64_t> > missed_map;
-    bufferlist::iterator reply_p = reply.begin();
-    ::decode(reply_map, reply_p);
-    ::decode(missed_map, reply_p);
+    auto reply_p = reply.cbegin();
+    decode(reply_map, reply_p);
+    decode(missed_map, reply_p);
     ASSERT_EQ(0u, reply_map.size());
     ASSERT_EQ(1u, missed_map.size());
   }
@@ -748,20 +753,28 @@ TEST_P(LibRadosWatchNotifyPP, WatchNotify3) {
     ASSERT_EQ(it->timeout_seconds, timeout);
   }
   bufferlist bl2, bl_reply;
+  std::cout << "notify2" << std::endl;
   ASSERT_EQ(0, ioctx.notify2(notify_oid, bl2, 300000, &bl_reply));
-  bufferlist::iterator p = bl_reply.begin();
+  std::cout << "notify2 done" << std::endl;
+  auto p = bl_reply.cbegin();
   std::map<std::pair<uint64_t,uint64_t>,bufferlist> reply_map;
   std::set<std::pair<uint64_t,uint64_t> > missed_map;
-  ::decode(reply_map, p);
-  ::decode(missed_map, p);
+  decode(reply_map, p);
+  decode(missed_map, p);
   ASSERT_EQ(1u, notify_cookies.size());
   ASSERT_EQ(1u, notify_cookies.count(handle));
   ASSERT_EQ(1u, reply_map.size());
   ASSERT_EQ(5u, reply_map.begin()->second.length());
   ASSERT_EQ(0, strncmp("reply", reply_map.begin()->second.c_str(), 5));
   ASSERT_EQ(0u, missed_map.size());
+  std::cout << "watch_check" << std::endl;
   ASSERT_GT(ioctx.watch_check(handle), 0);
+  std::cout << "unwatch2" << std::endl;
   ioctx.unwatch2(handle);
+
+  std::cout << " flushing" << std::endl;
+  cluster.watch_flush();
+  std::cout << "done" << std::endl;
 }
 
 TEST_F(LibRadosWatchNotify, Watch3Timeout) {
@@ -795,7 +808,9 @@ TEST_F(LibRadosWatchNotify, Watch3Timeout) {
   ASSERT_LT(age, age_bound * 1000);
   ASSERT_GT(age, 0);
   rados_conf_set(cluster, "objecter_inject_no_watch_ping", "true");
-  int left = 2 * timeout;
+  // allow a long time here since an osd peering event will renew our
+  // watch.
+  int left = 16 * timeout;
   std::cout << "waiting up to " << left << " for osd to time us out ..."
 	    << std::endl;
   while (notify_err == 0 && --left) {
@@ -817,9 +832,9 @@ TEST_F(LibRadosWatchNotify, Watch3Timeout) {
     reply.append(reply_buf, reply_buf_len);
     std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
     std::set<std::pair<uint64_t,uint64_t> > missed_map;
-    bufferlist::iterator reply_p = reply.begin();
-    ::decode(reply_map, reply_p);
-    ::decode(missed_map, reply_p);
+    auto reply_p = reply.cbegin();
+    decode(reply_map, reply_p);
+    decode(missed_map, reply_p);
     ASSERT_EQ(0u, reply_map.size());
     ASSERT_EQ(0u, missed_map.size());
   }
@@ -829,6 +844,8 @@ TEST_F(LibRadosWatchNotify, Watch3Timeout) {
 
   // re-watch
   rados_unwatch2(ioctx, handle);
+  rados_watch_flush(cluster);
+
   handle = 0;
   ASSERT_EQ(0,
 	    rados_watch2(ioctx, notify_oid, &handle,
@@ -845,9 +862,9 @@ TEST_F(LibRadosWatchNotify, Watch3Timeout) {
     reply.append(reply_buf, reply_buf_len);
     std::map<std::pair<uint64_t,uint64_t>, bufferlist> reply_map;
     std::set<std::pair<uint64_t,uint64_t> > missed_map;
-    bufferlist::iterator reply_p = reply.begin();
-    ::decode(reply_map, reply_p);
-    ::decode(missed_map, reply_p);
+    auto reply_p = reply.cbegin();
+    decode(reply_map, reply_p);
+    decode(missed_map, reply_p);
     ASSERT_EQ(1u, reply_map.size());
     ASSERT_EQ(0u, missed_map.size());
     ASSERT_EQ(1u, notify_cookies.count(handle));
@@ -859,6 +876,7 @@ TEST_F(LibRadosWatchNotify, Watch3Timeout) {
 
   rados_buffer_free(reply_buf);
   rados_unwatch2(ioctx, handle);
+  rados_watch_flush(cluster);
 }
 
 TEST_F(LibRadosWatchNotify, AioWatchDelete2) {

@@ -5,7 +5,6 @@
 #define CEPH_LIBRBD_JOURNAL_H
 
 #include "include/int_types.h"
-#include "include/atomic.h"
 #include "include/Context.h"
 #include "include/interval_set.h"
 #include "common/Cond.h"
@@ -19,9 +18,11 @@
 #include "librbd/Utils.h"
 #include "librbd/journal/Types.h"
 #include "librbd/journal/TypeTraits.h"
+
 #include <algorithm>
 #include <list>
 #include <string>
+#include <atomic>
 #include <unordered_map>
 
 class SafeTimer;
@@ -36,7 +37,6 @@ namespace librbd {
 
 class ImageCtx;
 
-namespace io { struct ObjectRequestHandle; }
 namespace journal { template <typename> class Replay; }
 
 template <typename ImageCtxT = ImageCtx>
@@ -90,8 +90,6 @@ public:
   static const std::string LOCAL_MIRROR_UUID;
   static const std::string ORPHAN_MIRROR_UUID;
 
-  typedef std::list<io::ObjectRequestHandle *> IOObjectRequests;
-
   Journal(ImageCtxT &image_ctx);
   ~Journal();
 
@@ -102,15 +100,11 @@ public:
   static int remove(librados::IoCtx &io_ctx, const std::string &image_id);
   static int reset(librados::IoCtx &io_ctx, const std::string &image_id);
 
-  static int is_tag_owner(ImageCtxT *image_ctx, bool *is_tag_owner);
-  static int is_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
-                          bool *is_tag_owner, ContextWQ *op_work_queue);
   static void is_tag_owner(ImageCtxT *image_ctx, bool *is_tag_owner,
                            Context *on_finish);
   static void is_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
                            bool *is_tag_owner, ContextWQ *op_work_queue,
                            Context *on_finish);
-  static int get_tag_owner(ImageCtxT *image_ctx, std::string *mirror_uuid);
   static void get_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
                             std::string *mirror_uuid,
                             ContextWQ *op_work_queue, Context *on_finish);
@@ -140,12 +134,10 @@ public:
 
   uint64_t append_write_event(uint64_t offset, size_t length,
                               const bufferlist &bl,
-                              const IOObjectRequests &requests,
                               bool flush_entry);
   uint64_t append_io_event(journal::EventEntry &&event_entry,
-                           const IOObjectRequests &requests,
                            uint64_t offset, size_t length,
-                           bool flush_entry);
+                           bool flush_entry, int filter_ret_val);
   void commit_io_event(uint64_t tid, int r);
   void commit_io_event_extent(uint64_t tid, uint64_t offset, uint64_t length,
                               int r);
@@ -159,7 +151,7 @@ public:
   void wait_event(uint64_t tid, Context *on_safe);
 
   uint64_t allocate_op_tid() {
-    uint64_t op_tid = m_op_tid.inc();
+    uint64_t op_tid = ++m_op_tid;
     assert(op_tid != 0);
     return op_tid;
   }
@@ -193,18 +185,18 @@ private:
 
   struct Event {
     Futures futures;
-    IOObjectRequests aio_object_requests;
     Contexts on_safe_contexts;
     ExtentInterval pending_extents;
+    int filter_ret_val = 0;
     bool committed_io = false;
     bool safe = false;
     int ret_val = 0;
 
     Event() {
     }
-    Event(const Futures &_futures, const IOObjectRequests &_requests,
-          uint64_t offset, size_t length)
-      : futures(_futures), aio_object_requests(_requests) {
+    Event(const Futures &_futures, uint64_t offset, size_t length,
+          int filter_ret_val)
+      : futures(_futures), filter_ret_val(filter_ret_val) {
       if (length > 0) {
         pending_extents.insert(offset, length);
       }
@@ -301,7 +293,7 @@ private:
   uint64_t m_event_tid;
   Events m_events;
 
-  atomic_t m_op_tid;
+  std::atomic<uint64_t> m_op_tid = { 0 };
   TidToFutures m_op_futures;
 
   bool m_processing_entry = false;
@@ -336,8 +328,8 @@ private:
 
   uint64_t append_io_events(journal::EventType event_type,
                             const Bufferlists &bufferlists,
-                            const IOObjectRequests &requests,
-                            uint64_t offset, size_t length, bool flush_entry);
+                            uint64_t offset, size_t length, bool flush_entry,
+                            int filter_ret_val);
   Future wait_event(Mutex &lock, uint64_t tid, Context *on_safe);
 
   void create_journaler();

@@ -36,38 +36,24 @@
 
 
 #include "common/config.h"
+#include "common/debug.h"
 
 #ifdef USE_NSS
-
 #include <nspr.h>
 #include <cert.h>
 #include <nss.h>
 #include <smime.h>
-
 #endif
-
-#include <string.h>
-#include <errno.h>
-
-
-#include "include/buffer.h"
-
-#include "common/debug.h"
-
-#include "ceph_crypto_cms.h"
 
 #define dout_subsys ceph_subsys_crypto
 
-
 #ifndef USE_NSS
-
 int ceph_decode_cms(CephContext *cct, bufferlist& cms_bl, bufferlist& decoded_bl)
 {
   return -ENOTSUP;
 }
 
 #else
-
 
 static int cms_verbose = 0;
 
@@ -76,7 +62,6 @@ DigestFile(PLArenaPool *poolp, SECItem ***digests, SECItem *input,
            SECAlgorithmID **algids)
 {
     NSSCMSDigestContext *digcx;
-    SECStatus rv;
 
     digcx = NSS_CMSDigestContext_StartMultiple(algids);
     if (digcx == NULL)
@@ -84,8 +69,7 @@ DigestFile(PLArenaPool *poolp, SECItem ***digests, SECItem *input,
 
     NSS_CMSDigestContext_Update(digcx, input->data, input->len);
 
-    rv = NSS_CMSDigestContext_FinishMultiple(digcx, poolp, digests);
-    return rv;
+    return NSS_CMSDigestContext_FinishMultiple(digcx, poolp, digests);
 }
 
 
@@ -356,5 +340,4 @@ int ceph_decode_cms(CephContext *cct, bufferlist& cms_bl, bufferlist& decoded_bl
 
     return ret;
 }
-
 #endif

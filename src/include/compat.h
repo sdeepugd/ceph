@@ -13,6 +13,7 @@
 #define CEPH_COMPAT_H
 
 #include "acconfig.h"
+#include <sys/types.h>
 
 #if defined(__linux__)
 #define PROCPREFIX
@@ -24,10 +25,22 @@
 // And all compatibility stuff is standard mounted on this 
 #define PROCPREFIX "/compat/linux"
 
+#ifndef MSG_MORE
+#define MSG_MORE 0
+#endif
+
+#ifndef O_DSYNC
+#define O_DSYNC O_SYNC
+#endif
+
+/* And include the extra required include file */
+#include <pthread_np.h>
+
+#endif /* __FreeBSD__ */
+
+#if defined(__APPLE__) || defined(__FreeBSD__)
 /* Make sure that ENODATA is defined in the correct way */
-#ifndef ENODATA
-#define	ENODATA	ENOATTR
-#else
+#ifdef ENODATA
 #if (ENODATA == 9919)
 // #warning ENODATA already defined to be 9919, redefining to fix
 // Silencing this warning because it fires at all files where compat.h
@@ -41,18 +54,11 @@
 // at the location of usage and report a possible confict.
 // This is left up to a future improvement
 #elif (ENODATA != 87)
-#warning ENODATA already defined to a value different from 87 (ENOATRR), refining to fix
+// #warning ENODATA already defined to a value different from 87 (ENOATRR), refining to fix
 #endif
 #undef ENODATA
+#endif
 #define ENODATA ENOATTR
-#endif
-#ifndef MSG_MORE
-#define	MSG_MORE 0
-#endif
-
-#ifndef O_DSYNC
-#define O_DSYNC O_SYNC
-#endif
 
 // Fix clock accuracy
 #if !defined(CLOCK_MONOTONIC_COARSE)
@@ -70,12 +76,6 @@
 #endif
 #endif
 
-/* And include the extra required include file */
-#include <pthread_np.h>
-
-#endif /* !__FreeBSD__ */
-
-#if defined(__APPLE__) || defined(__FreeBSD__)
 /* get PATH_MAX */
 #include <limits.h>
 
@@ -146,8 +146,10 @@
     #define ceph_pthread_setname pthread_setname_np
   #endif
 #elif defined(HAVE_PTHREAD_SET_NAME_NP)
-  /* Fix a small name diff */
-  #define ceph_pthread_setname pthread_set_name_np
+  /* Fix a small name diff and return 0 */
+  #define ceph_pthread_setname(thread, name) ({ \
+    pthread_set_name_np(thread, name);          \
+    0; })
 #else
   /* compiler warning free success noop */
   #define ceph_pthread_setname(thread, name) ({ \
@@ -164,5 +166,7 @@
       *name = '\0';                                \
     0; })
 #endif
+
+int ceph_posix_fallocate(int fd, off_t offset, off_t len);
 
 #endif /* !CEPH_COMPAT_H */

@@ -15,9 +15,9 @@
 #ifndef OS_KEYVALUESTORE_H
 #define OS_KEYVALUESTORE_H
 
+#include <memory>
 #include <string>
 #include <vector>
-#include "include/memory.h"
 #include "kv/KeyValueDB.h"
 #include "common/hobject.h"
 
@@ -152,10 +152,12 @@ public:
     const SequencerPosition *spos=0   ///< [in] Sequencer
     ) { return 0; }
 
-  virtual int check(std::ostream &out, bool repair = false) { return 0; }
+  virtual int check(std::ostream &out, bool repair = false, bool force = false) { return 0; }
 
-  typedef KeyValueDB::GenericIteratorImpl ObjectMapIteratorImpl;
-  typedef ceph::shared_ptr<ObjectMapIteratorImpl> ObjectMapIterator;
+  virtual void compact() {}
+
+  typedef KeyValueDB::SimplestIteratorImpl ObjectMapIteratorImpl;
+  typedef std::shared_ptr<ObjectMapIteratorImpl> ObjectMapIterator;
   virtual ObjectMapIterator get_iterator(const ghobject_t &oid) {
     return ObjectMapIterator();
   }

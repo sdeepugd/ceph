@@ -56,7 +56,7 @@ struct uuid_d {
     ::encode_raw(uuid, bl);
   }
 
-  void decode(bufferlist::iterator& p) const {
+  void decode(bufferlist::const_iterator& p) const {
     ::decode_raw(uuid, p);
   }
 };
@@ -73,6 +73,9 @@ inline bool operator==(const uuid_d& l, const uuid_d& r) {
 }
 inline bool operator!=(const uuid_d& l, const uuid_d& r) {
   return l.uuid != r.uuid;
+}
+inline bool operator<(const uuid_d& l, const uuid_d& r) {
+  return l.to_string() < r.to_string();
 }
 
 

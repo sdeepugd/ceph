@@ -33,7 +33,7 @@ class RGWRealmWatcher : public librados::WatchCtx2 {
     virtual ~Watcher() = default;
 
     virtual void handle_notify(RGWRealmNotify type,
-                               bufferlist::iterator& p) = 0;
+                               bufferlist::const_iterator& p) = 0;
   };
 
   RGWRealmWatcher(CephContext* cct, RGWRealm& realm);
@@ -56,7 +56,7 @@ class RGWRealmWatcher : public librados::WatchCtx2 {
   /// so that we don't miss notifications during realm reconfiguration
   librados::Rados rados;
   librados::IoCtx pool_ctx;
-  uint64_t watch_handle;
+  uint64_t watch_handle = 0;
   std::string watch_oid;
 
   int watch_start(RGWRealm& realm);

@@ -13,10 +13,8 @@
 #ifndef CEPH_HISTOGRAM_H
 #define CEPH_HISTOGRAM_H
 
-#include <vector>
 #include <list>
 
-#include "include/intarith.h"
 #include "include/encoding.h"
 
 namespace ceph {
@@ -52,6 +50,9 @@ private:
 public:
   void clear() {
     h.clear();
+  }
+  bool empty() const {
+    return h.empty();
   }
   void set_bin(int bin, int32_t count) {
     _expand_to(bin + 1);
@@ -119,7 +120,7 @@ public:
 
   void dump(Formatter *f) const;
   void encode(bufferlist &bl) const;
-  void decode(bufferlist::iterator &bl);
+  void decode(bufferlist::const_iterator &bl);
   static void generate_test_instances(std::list<pow2_hist_t*>& o);
 };
 WRITE_CLASS_ENCODER(pow2_hist_t)

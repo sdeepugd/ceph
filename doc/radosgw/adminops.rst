@@ -13,6 +13,10 @@ Get Usage
 
 Request bandwidth usage information.
 
+Note: this feature is disabled by default, can be enabled by setting ``rgw
+enable usage log = true`` in the appropriate section of ceph.conf. For changes
+in ceph.conf to take effect, radosgw process restart is needed.
+
 :caps: usage=read
 
 Syntax
@@ -163,6 +167,10 @@ Trim Usage
 Remove usage information. With no dates specified, removes all usage
 information.
 
+Note: this feature is disabled by default, can be enabled by setting ``rgw
+enable usage log = true`` in the appropriate section of ceph.conf. For changes
+in ceph.conf to take effect, radosgw process restart is needed.
+
 :caps: usage=write
 
 Syntax
@@ -215,8 +223,7 @@ TBD.
 Get User Info
 =============
 
-Get user information. If no user is specified returns the list of all users along with suspension
-information.
+Get user information.
 
 :caps: users=read
 
@@ -314,6 +321,11 @@ generated key is added to the keyring without replacing an existing key pair.
 If ``access-key`` is specified and refers to an existing key owned by the user
 then it will be modified.
 
+.. versionadded:: Luminous
+
+A ``tenant`` may either be specified as a part of uid or as an additional
+request param.
+
 :caps: users=write
 
 Syntax
@@ -335,6 +347,9 @@ Request Parameters
 :Type: String
 :Example: ``foo_user``
 :Required: Yes
+
+A tenant name may also specified as a part of ``uid``, by following the syntax
+``tenant$user``, refer to `Multitenancy`_ for more details.
 
 ``display-name``
 
@@ -401,6 +416,15 @@ Request Parameters
 :Example: False [False]
 :Required: No
 
+.. versionadded:: Jewel
+
+``tenant``
+
+:Description: the Tenant under which a user is a part of.
+:Type: string
+:Example: tenant1
+:Required: No
+
 Response Entities
 ~~~~~~~~~~~~~~~~~
 
@@ -410,6 +434,12 @@ If successful, the response contains the user information.
 
 :Description: A container for the user data information.
 :Type: Container
+
+``tenant``
+
+:Description: The tenant which user is a part of.
+:Type: String
+:Parent: ``user``
 
 ``user_id``
 
@@ -738,7 +768,7 @@ Create Subuser
 ==============
 
 Create a new subuser (primarily useful for clients using the Swift API).
-Note that in general for a subuser to be useful, it must be granted 
+Note that in general for a subuser to be useful, it must be granted
 permissions by specifying ``access``. As with user creation if
 ``subuser`` is specified without ``secret``, then a secret key will
 be automatically generated.
@@ -1811,11 +1841,6 @@ Special Error Responses
 :Description: User does not possess specified capability.
 :Code: 404 Not Found
 
-Special Error Responses
-~~~~~~~~~~~~~~~~~~~~~~~
-
-None.
-
 
 Quotas
 ======
@@ -1835,10 +1860,10 @@ Valid parameters for quotas include:
 
 - **Maximum Objects:** The ``max-objects`` setting allows you to specify
   the maximum number of objects. A negative value disables this setting.
-  
+
 - **Maximum Size:** The ``max-size`` option allows you to specify a quota
   for the maximum number of bytes. A negative value disables this setting.
-  
+
 - **Quota Type:** The ``quota-type`` option sets the scope for the quota.
   The options are ``bucket`` and ``user``.
 
@@ -1848,7 +1873,7 @@ Valid parameters for quotas include:
 Get User Quota
 ~~~~~~~~~~~~~~
 
-To get a quota, the user must have ``users`` capability set with ``read`` 
+To get a quota, the user must have ``users`` capability set with ``read``
 permission. ::
 
 	GET /admin/user?quota&uid=<uid>&quota-type=user
@@ -1857,7 +1882,7 @@ permission. ::
 Set User Quota
 ~~~~~~~~~~~~~~
 
-To set a quota, the user must have ``users`` capability set with ``write`` 
+To set a quota, the user must have ``users`` capability set with ``write``
 permission. ::
 
 	PUT /admin/user?quota&uid=<uid>&quota-type=user
@@ -1870,7 +1895,7 @@ as encoded in the corresponding read operation.
 Get Bucket Quota
 ~~~~~~~~~~~~~~~~
 
-To get a quota, the user must have ``users`` capability set with ``read`` 
+To get a quota, the user must have ``users`` capability set with ``read``
 permission. ::
 
 	GET /admin/user?quota&uid=<uid>&quota-type=bucket
@@ -1879,7 +1904,7 @@ permission. ::
 Set Bucket Quota
 ~~~~~~~~~~~~~~~~
 
-To set a quota, the user must have ``users`` capability set with ``write`` 
+To set a quota, the user must have ``users`` capability set with ``write``
 permission. ::
 
 	PUT /admin/user?quota&uid=<uid>&quota-type=bucket
@@ -1887,6 +1912,17 @@ permission. ::
 The content must include a JSON representation of the quota settings
 as encoded in the corresponding read operation.
 
+
+Set Quota for an Individual Bucket
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To set a quota, the user must have ``buckets`` capability set with ``write``
+permission. ::
+
+	PUT /admin/bucket?quota&uid=<uid>&bucket=<bucket-name>&quota
+
+The content must include a JSON representation of the quota settings
+as mentioned in Set Bucket Quota section above.
 
 
 
@@ -1920,5 +1956,30 @@ Standard Error Responses
 
 
 
+
+Binding libraries
+========================
+
+``Golang``
+
+ - `QuentinPerez/go-radosgw`_
+
+``Java``
+ 
+ - `twonote/radosgw-admin4j`_
+
+``Python``
+
+ - `UMIACS/rgwadmin`_
+ - `valerytschopp/python-radosgw-admin`_
+
+
+
 .. _Admin Guide: ../admin
 .. _Quota Management: ../admin#quota-management
+.. _Multitenancy: ./multitenancy
+.. _QuentinPerez/go-radosgw: https://github.com/QuentinPerez/go-radosgw
+.. _twonote/radosgw-admin4j: https://github.com/twonote/radosgw-admin4j
+.. _UMIACS/rgwadmin: https://github.com/UMIACS/rgwadmin
+.. _valerytschopp/python-radosgw-admin: https://github.com/valerytschopp/python-radosgw-admin
+

@@ -53,9 +53,9 @@ public:
     }
   }
 
-  uint32_t op;
-  uint64_t cookie;
-  version_t last_committed;
+  uint32_t op = 0;
+  uint64_t cookie = 0;
+  version_t last_committed = 0;
   pair<string,string> last_key;
   bufferlist chunk_bl;
   entity_inst_t reply_to;
@@ -87,24 +87,25 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
-    ::encode(op, payload);
-    ::encode(cookie, payload);
-    ::encode(last_committed, payload);
-    ::encode(last_key.first, payload);
-    ::encode(last_key.second, payload);
-    ::encode(chunk_bl, payload);
-    ::encode(reply_to, payload, features);
+    using ceph::encode;
+    encode(op, payload);
+    encode(cookie, payload);
+    encode(last_committed, payload);
+    encode(last_key.first, payload);
+    encode(last_key.second, payload);
+    encode(chunk_bl, payload);
+    encode(reply_to, payload, features);
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(op, p);
-    ::decode(cookie, p);
-    ::decode(last_committed, p);
-    ::decode(last_key.first, p);
-    ::decode(last_key.second, p);
-    ::decode(chunk_bl, p);
-    ::decode(reply_to, p);
+    auto p = payload.cbegin();
+    decode(op, p);
+    decode(cookie, p);
+    decode(last_committed, p);
+    decode(last_key.first, p);
+    decode(last_key.second, p);
+    decode(chunk_bl, p);
+    decode(reply_to, p);
   }
 };
 

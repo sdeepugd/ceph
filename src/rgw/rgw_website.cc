@@ -23,7 +23,6 @@
 #include "include/types.h"
 #include "rgw_website.h"
 
-using namespace std;
 
 
 bool RGWBWRoutingRuleCondition::check_key_condition(const string& key) {
@@ -106,13 +105,15 @@ bool RGWBucketWebsiteConf::should_redirect(const string& key, const int http_err
   return true;
 }
 
-void RGWBucketWebsiteConf::get_effective_key(const string& key, string *effective_key) const
+void RGWBucketWebsiteConf::get_effective_key(const string& key, string *effective_key, bool is_file) const
 {
 
   if (key.empty()) {
     *effective_key = index_doc_suffix;
   } else if (key[key.size() - 1] == '/') {
     *effective_key = key + index_doc_suffix;
+  } else if (! is_file) {
+    *effective_key = key + "/" + index_doc_suffix; 
   } else {
     *effective_key = key;
   }

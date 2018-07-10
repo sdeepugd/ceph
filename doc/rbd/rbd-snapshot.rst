@@ -202,7 +202,7 @@ clone snapshots  from one pool to images in another pool.
 
 
 #. **Image Template:** A common use case for block device layering is to create a
-   a master image and a snapshot that serves as a template for clones. For example, 
+   master image and a snapshot that serves as a template for clones. For example, 
    a user may create an image for a Linux distribution (e.g., Ubuntu 12.04), and 
    create a snapshot for it. Periodically, the user may update the image and create
    a new snapshot (e.g., ``sudo apt-get update``, ``sudo apt-get upgrade``,
@@ -294,7 +294,7 @@ a snapshot, you must flatten the child images first. ::
 
 For example:: 
 
-	rbd flatten rbd/my-image
+	rbd flatten rbd/new-image
 
 .. note:: Since a flattened image contains all the information from the snapshot, 
    a flattened image will take up more storage space than a layered clone.

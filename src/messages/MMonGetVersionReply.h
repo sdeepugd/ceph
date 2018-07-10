@@ -40,22 +40,23 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
-    ::encode(handle, payload);
-    ::encode(version, payload);
-    ::encode(oldest_version, payload);
+    using ceph::encode;
+    encode(handle, payload);
+    encode(version, payload);
+    encode(oldest_version, payload);
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(handle, p);
-    ::decode(version, p);
+    auto p = payload.cbegin();
+    decode(handle, p);
+    decode(version, p);
     if (header.version >= 2)
-      ::decode(oldest_version, p);
+      decode(oldest_version, p);
   }
 
-  ceph_tid_t handle;
-  version_t version;
-  version_t oldest_version;
+  ceph_tid_t handle = 0;
+  version_t version = 0;
+  version_t oldest_version = 0;
 
 private:
   ~MMonGetVersionReply() override {}

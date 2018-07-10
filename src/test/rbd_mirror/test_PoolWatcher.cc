@@ -20,6 +20,7 @@
 #include "tools/rbd_mirror/PoolWatcher.h"
 #include "tools/rbd_mirror/Threads.h"
 #include "tools/rbd_mirror/types.h"
+#include "tools/rbd_mirror/pool_watcher/Types.h"
 #include "test/librados/test.h"
 #include "gtest/gtest.h"
 #include <boost/scope_exit.hpp>
@@ -67,17 +68,17 @@ public:
     TestFixture::TearDown();
   }
 
-  struct PoolWatcherListener : public PoolWatcher<>::Listener {
+  struct PoolWatcherListener : public rbd::mirror::pool_watcher::Listener {
     TestPoolWatcher *test;
     Cond cond;
     ImageIds image_ids;
 
-    PoolWatcherListener(TestPoolWatcher *test) : test(test) {
+    explicit PoolWatcherListener(TestPoolWatcher *test) : test(test) {
     }
 
     void handle_update(const std::string &mirror_uuid,
-                       const ImageIds &added_image_ids,
-                       const ImageIds &removed_image_ids) override {
+                       ImageIds &&added_image_ids,
+                       ImageIds &&removed_image_ids) override {
       Mutex::Locker locker(test->m_lock);
       for (auto &image_id : removed_image_ids) {
         image_ids.erase(image_id);
@@ -97,6 +98,7 @@ public:
 
     librados::IoCtx ioctx;
     ASSERT_EQ(0, m_cluster->ioctx_create2(pool_id, ioctx));
+    ioctx.application_enable("rbd", true);
 
     m_pool_watcher.reset(new PoolWatcher<>(m_threads, ioctx,
                                            m_pool_watcher_listener));

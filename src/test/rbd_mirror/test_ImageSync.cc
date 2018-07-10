@@ -11,10 +11,13 @@
 #include "librbd/ImageState.h"
 #include "librbd/internal.h"
 #include "librbd/Operations.h"
+#include "librbd/io/AioCompletion.h"
+#include "librbd/io/ImageDispatchSpec.h"
 #include "librbd/io/ImageRequestWQ.h"
 #include "librbd/io/ReadResult.h"
 #include "librbd/journal/Types.h"
 #include "tools/rbd_mirror/ImageSync.h"
+#include "tools/rbd_mirror/InstanceWatcher.h"
 #include "tools/rbd_mirror/Threads.h"
 
 void register_test_image_sync() {
@@ -25,9 +28,20 @@ namespace mirror {
 
 namespace {
 
+int flush(librbd::ImageCtx *image_ctx) {
+  C_SaferCond ctx;
+  auto aio_comp = librbd::io::AioCompletion::create(
+    &ctx, image_ctx, librbd::io::AIO_TYPE_FLUSH);
+  auto req = librbd::io::ImageDispatchSpec<>::create_flush_request(
+    *image_ctx, aio_comp, librbd::io::FLUSH_SOURCE_INTERNAL, {});
+  req->send();
+  delete req;
+  return ctx.wait();
+}
+
 void scribble(librbd::ImageCtx *image_ctx, int num_ops, size_t max_size)
 {
-  max_size = MIN(image_ctx->size, max_size);
+  max_size = std::min(image_ctx->size, max_size);
   for (int i=0; i<num_ops; i++) {
     uint64_t off = rand() % (image_ctx->size - max_size + 1);
     uint64_t len = 1 + rand() % max_size;
@@ -43,7 +57,7 @@ void scribble(librbd::ImageCtx *image_ctx, int num_ops, size_t max_size)
   }
 
   RWLock::RLocker owner_locker(image_ctx->owner_lock);
-  ASSERT_EQ(0, image_ctx->flush());
+  ASSERT_EQ(0, flush(image_ctx));
 }
 
 } // anonymous namespace
@@ -55,6 +69,10 @@ public:
     create_and_open(m_local_io_ctx, &m_local_image_ctx);
     create_and_open(m_remote_io_ctx, &m_remote_image_ctx);
 
+    m_instance_watcher = rbd::mirror::InstanceWatcher<>::create(
+        m_local_io_ctx, m_threads->work_queue, nullptr);
+    m_instance_watcher->handle_acquire_leader();
+
     m_remote_journaler = new ::journal::Journaler(
       m_threads->work_queue, m_threads->timer, &m_threads->timer_lock,
       m_remote_io_ctx, m_remote_image_ctx->id, "mirror-uuid", {});
@@ -63,14 +81,18 @@ public:
 
     librbd::journal::ClientData client_data(m_client_meta);
     bufferlist client_data_bl;
-    ::encode(client_data, client_data_bl);
+    encode(client_data, client_data_bl);
 
     ASSERT_EQ(0, m_remote_journaler->register_client(client_data_bl));
   }
 
   void TearDown() override {
     TestFixture::TearDown();
+
+    m_instance_watcher->handle_release_leader();
+
     delete m_remote_journaler;
+    delete m_instance_watcher;
   }
 
   void create_and_open(librados::IoCtx &io_ctx, librbd::ImageCtx **image_ctx) {
@@ -91,11 +113,12 @@ public:
     return new ImageSync<>(m_local_image_ctx, m_remote_image_ctx,
                            m_threads->timer, &m_threads->timer_lock,
                            "mirror-uuid", m_remote_journaler, &m_client_meta,
-                           m_threads->work_queue, ctx);
+                           m_threads->work_queue, m_instance_watcher, ctx);
   }
 
   librbd::ImageCtx *m_remote_image_ctx;
   librbd::ImageCtx *m_local_image_ctx;
+  rbd::mirror::InstanceWatcher<> *m_instance_watcher;
   ::journal::Journaler *m_remote_journaler;
   librbd::journal::MirrorPeerClientMeta m_client_meta;
 };
@@ -154,7 +177,7 @@ TEST_F(TestImageSync, Resize) {
                                                                0));
   {
     RWLock::RLocker owner_locker(m_remote_image_ctx->owner_lock);
-    ASSERT_EQ(0, m_remote_image_ctx->flush());
+    ASSERT_EQ(0, flush(m_remote_image_ctx));
   }
 
   ASSERT_EQ(0, create_snap(m_remote_image_ctx, "snap", nullptr));
@@ -196,7 +219,7 @@ TEST_F(TestImageSync, Discard) {
                                                                0));
   {
     RWLock::RLocker owner_locker(m_remote_image_ctx->owner_lock);
-    ASSERT_EQ(0, m_remote_image_ctx->flush());
+    ASSERT_EQ(0, flush(m_remote_image_ctx));
   }
 
   ASSERT_EQ(0, create_snap(m_remote_image_ctx, "snap", nullptr));
@@ -205,7 +228,7 @@ TEST_F(TestImageSync, Discard) {
                                                                      len - 2, m_remote_image_ctx->skip_partial_discard));
   {
     RWLock::RLocker owner_locker(m_remote_image_ctx->owner_lock);
-    ASSERT_EQ(0, m_remote_image_ctx->flush());
+    ASSERT_EQ(0, flush(m_remote_image_ctx));
   }
 
   C_SaferCond ctx;
@@ -261,12 +284,17 @@ TEST_F(TestImageSync, SnapshotStress) {
   read_local_bl.append(std::string(object_size, '1'));
 
   for (auto &snap_name : snap_names) {
+    uint64_t remote_snap_id;
+    {
+      RWLock::RLocker remote_snap_locker(m_remote_image_ctx->snap_lock);
+      remote_snap_id = m_remote_image_ctx->get_snap_id(
+        cls::rbd::UserSnapshotNamespace{}, snap_name);
+    }
+
     uint64_t remote_size;
     {
       C_SaferCond ctx;
-      m_remote_image_ctx->state->snap_set(cls::rbd::UserSnapshotNamespace(),
-					  snap_name,
-					  &ctx);
+      m_remote_image_ctx->state->snap_set(remote_snap_id, &ctx);
       ASSERT_EQ(0, ctx.wait());
 
       RWLock::RLocker remote_snap_locker(m_remote_image_ctx->snap_lock);
@@ -274,19 +302,27 @@ TEST_F(TestImageSync, SnapshotStress) {
         m_remote_image_ctx->snap_id);
     }
 
+    uint64_t local_snap_id;
+    {
+      RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
+      local_snap_id = m_local_image_ctx->get_snap_id(
+        cls::rbd::UserSnapshotNamespace{}, snap_name);
+    }
+
     uint64_t local_size;
     {
       C_SaferCond ctx;
-      m_local_image_ctx->state->snap_set(cls::rbd::UserSnapshotNamespace(),
-					 snap_name,
-					 &ctx);
+      m_local_image_ctx->state->snap_set(local_snap_id, &ctx);
       ASSERT_EQ(0, ctx.wait());
 
       RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
       local_size = m_local_image_ctx->get_image_size(
         m_local_image_ctx->snap_id);
-      ASSERT_FALSE(m_local_image_ctx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID,
-                                                 m_local_image_ctx->snap_lock));
+      bool flags_set;
+      ASSERT_EQ(0, m_local_image_ctx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID,
+                                                 m_local_image_ctx->snap_lock,
+                                                 &flags_set));
+      ASSERT_FALSE(flags_set);
     }
 
     ASSERT_EQ(remote_size, local_size);

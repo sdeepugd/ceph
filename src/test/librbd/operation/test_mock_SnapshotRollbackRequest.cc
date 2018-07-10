@@ -4,6 +4,7 @@
 #include "test/librbd/test_mock_fixture.h"
 #include "test/librbd/test_support.h"
 #include "test/librbd/mock/MockImageCtx.h"
+#include "test/librbd/mock/io/MockObjectDispatch.h"
 #include "test/librados_test_stub/MockTestMemIoCtxImpl.h"
 #include "include/stringify.h"
 #include "common/bit_vector.hpp"
@@ -69,10 +70,6 @@ struct AsyncRequest<MockOperationImageCtx> : public AsyncRequest<MockImageCtx> {
 #include "librbd/AsyncObjectThrottle.cc"
 #include "librbd/operation/Request.cc"
 #include "librbd/operation/SnapshotRollbackRequest.cc"
-
-template class librbd::AsyncRequest<librbd::MockImageCtx>;
-template class librbd::AsyncObjectThrottle<librbd::MockImageCtx>;
-template class librbd::operation::Request<librbd::MockImageCtx>;
 
 namespace librbd {
 namespace operation {
@@ -163,11 +160,10 @@ public:
     }
   }
 
-  void expect_invalidate_cache(MockOperationImageCtx &mock_image_ctx, int r) {
-    if (mock_image_ctx.object_cacher != nullptr) {
-      EXPECT_CALL(mock_image_ctx, invalidate_cache(true, _))
-                    .WillOnce(WithArg<1>(CompleteContext(r, static_cast<ContextWQ*>(NULL))));
-    }
+  void expect_invalidate_cache(MockOperationImageCtx &mock_image_ctx,
+                               int r) {
+    EXPECT_CALL(*mock_image_ctx.io_object_dispatcher, invalidate_cache(_))
+                   .WillOnce(CompleteContext(r, mock_image_ctx.image_ctx->op_work_queue));
   }
 
   int when_snap_rollback(MockOperationImageCtx &mock_image_ctx,
@@ -306,6 +302,7 @@ TEST_F(TestMockOperationSnapshotRollbackRequest, RollbackObjectsError) {
 TEST_F(TestMockOperationSnapshotRollbackRequest, InvalidateCacheError) {
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  REQUIRE(ictx->cache);
 
   MockOperationImageCtx mock_image_ctx(*ictx);
   MockExclusiveLock mock_exclusive_lock;

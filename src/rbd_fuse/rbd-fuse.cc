@@ -19,6 +19,8 @@
 #include <getopt.h>
 #include <assert.h>
 #include <string>
+#include <mutex>
+#include <limits.h>
 
 #if defined(__FreeBSD__)
 #include <sys/param.h>
@@ -26,7 +28,6 @@
 
 #include "include/compat.h"
 #include "include/rbd/librbd.h"
-#include "common/Mutex.h"
 
 static int gotrados = 0;
 char *pool_name;
@@ -34,7 +35,7 @@ char *mount_image_name;
 rados_t cluster;
 rados_ioctx_t ioctx;
 
-Mutex readdir_lock("read_dir");
+std::mutex readdir_lock;
 
 struct rbd_stat {
 	u_char valid;
@@ -213,11 +214,11 @@ iter_images(void *cookie,
 {
 	struct rbd_image *im;
 
-	readdir_lock.Lock();
-	
+	readdir_lock.lock();
+
 	for (im = rbd_image_data.images; im != NULL; im = im->next)
 		iter(cookie, im->image_name);
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 }
 
 static void count_images_cb(void *cookie, const char *image)
@@ -229,9 +230,9 @@ static int count_images(void)
 {
 	unsigned int count = 0;
 
-	readdir_lock.Lock();
+	readdir_lock.lock();
 	enumerate_images(&rbd_image_data);
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 
 	iter_images(&count, count_images_cb);
 	return count;
@@ -270,9 +271,9 @@ static int rbdfs_getattr(const char *path, struct stat *stbuf)
 	}
 
 	if (!in_opendir) {
-		readdir_lock.Lock();
+		readdir_lock.lock();
 		enumerate_images(&rbd_image_data);
-		readdir_lock.Unlock();
+		readdir_lock.unlock();
 	}
 	fd = open_rbd_image(path + 1);
 	if (fd < 0)
@@ -304,9 +305,9 @@ static int rbdfs_open(const char *path, struct fuse_file_info *fi)
 	if (path[0] == 0)
 		return -ENOENT;
 
-	readdir_lock.Lock();
+	readdir_lock.lock();
 	enumerate_images(&rbd_image_data);
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 	fd = open_rbd_image(path + 1);
 	if (fd < 0)
 		return -ENOENT;
@@ -402,9 +403,9 @@ static int rbdfs_statfs(const char *path, struct statvfs *buf)
 
 	num[0] = 1;
 	num[1] = 0;
-	readdir_lock.Lock();
+	readdir_lock.lock();
 	enumerate_images(&rbd_image_data);
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 	iter_images(num, rbdfs_statfs_image_cb);
 
 #define	RBDFS_BSIZE	4096
@@ -435,10 +436,10 @@ static int rbdfs_fsync(const char *path, int datasync,
 static int rbdfs_opendir(const char *path, struct fuse_file_info *fi)
 {
 	// only one directory, so global "in_opendir" flag should be fine
-	readdir_lock.Lock();
+	readdir_lock.lock();
 	in_opendir++;
 	enumerate_images(&rbd_image_data);
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 	return 0;
 }
 
@@ -476,9 +477,9 @@ static int rbdfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 static int rbdfs_releasedir(const char *path, struct fuse_file_info *fi)
 {
 	// see opendir comments
-	readdir_lock.Lock();
+	readdir_lock.lock();
 	in_opendir--;
-	readdir_lock.Unlock();
+	readdir_lock.unlock();
 	return 0;
 }
 

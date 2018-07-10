@@ -16,20 +16,25 @@
 #ifndef CEPH_FILEJOURNAL_H
 #define CEPH_FILEJOURNAL_H
 
+#include <stdlib.h>
 #include <deque>
 using std::deque;
 
 #include "Journal.h"
+#include "common/config_fwd.h"
 #include "common/Cond.h"
 #include "common/Mutex.h"
 #include "common/Thread.h"
 #include "common/Throttle.h"
 #include "JournalThrottle.h"
-
+#include "common/zipkin_trace.h"
 
 #ifdef HAVE_LIBAIO
 # include <libaio.h>
 #endif
+
+// re-include our assert to clobber the system one; fix dout:
+#include "include/assert.h"
 
 /**
  * Implements journaling on top of block device or file.
@@ -46,8 +51,7 @@ public:
     Context *finish;
     utime_t start;
     TrackedOpRef tracked_op;
-    completion_item(uint64_t o, Context *c, utime_t s,
-		    TrackedOpRef opref)
+    completion_item(uint64_t o, Context *c, utime_t s, TrackedOpRef opref)
       : seq(o), finish(c), start(s), tracked_op(opref) {}
     completion_item() : seq(0), finish(0), start(0) {}
   };
@@ -56,6 +60,7 @@ public:
     bufferlist bl;
     uint32_t orig_len;
     TrackedOpRef tracked_op;
+    ZTracer::Trace trace;
     write_item(uint64_t s, bufferlist& b, int ol, TrackedOpRef opref) :
       seq(s), orig_len(ol), tracked_op(opref) {
       bl.claim(b, buffer::list::CLAIM_ALLOW_NONSHAREABLE); // potential zero-copy
@@ -155,57 +160,59 @@ public:
     }
 
     void encode(bufferlist& bl) const {
+      using ceph::encode;
       __u32 v = 4;
-      ::encode(v, bl);
+      encode(v, bl);
       bufferlist em;
       {
-	::encode(flags, em);
-	::encode(fsid, em);
-	::encode(block_size, em);
-	::encode(alignment, em);
-	::encode(max_size, em);
-	::encode(start, em);
-	::encode(committed_up_to, em);
-	::encode(start_seq, em);
+	encode(flags, em);
+	encode(fsid, em);
+	encode(block_size, em);
+	encode(alignment, em);
+	encode(max_size, em);
+	encode(start, em);
+	encode(committed_up_to, em);
+	encode(start_seq, em);
       }
-      ::encode(em, bl);
+      encode(em, bl);
     }
-    void decode(bufferlist::iterator& bl) {
+    void decode(bufferlist::const_iterator& bl) {
+      using ceph::decode;
       __u32 v;
-      ::decode(v, bl);
-      if (v < 2) {  // normally 0, but concievably 1
+      decode(v, bl);
+      if (v < 2) {  // normally 0, but conceivably 1
 	// decode old header_t struct (pre v0.40).
 	bl.advance(4); // skip __u32 flags (it was unused by any old code)
 	flags = 0;
 	uint64_t tfsid;
-	::decode(tfsid, bl);
+	decode(tfsid, bl);
 	*(uint64_t*)&fsid.bytes()[0] = tfsid;
 	*(uint64_t*)&fsid.bytes()[8] = tfsid;
-	::decode(block_size, bl);
-	::decode(alignment, bl);
-	::decode(max_size, bl);
-	::decode(start, bl);
+	decode(block_size, bl);
+	decode(alignment, bl);
+	decode(max_size, bl);
+	decode(start, bl);
 	committed_up_to = 0;
 	start_seq = 0;
 	return;
       }
       bufferlist em;
-      ::decode(em, bl);
-      bufferlist::iterator t = em.begin();
-      ::decode(flags, t);
-      ::decode(fsid, t);
-      ::decode(block_size, t);
-      ::decode(alignment, t);
-      ::decode(max_size, t);
-      ::decode(start, t);
+      decode(em, bl);
+      auto t = em.cbegin();
+      decode(flags, t);
+      decode(fsid, t);
+      decode(block_size, t);
+      decode(alignment, t);
+      decode(max_size, t);
+      decode(start, t);
 
       if (v > 2)
-	::decode(committed_up_to, t);
+	decode(committed_up_to, t);
       else
 	committed_up_to = 0;
 
       if (v > 3)
-	::decode(start_seq, t);
+	decode(start_seq, t);
       else
 	start_seq = 0;
     }
@@ -247,7 +254,7 @@ private:
   /// state associated with an in-flight aio request
   /// Protected by aio_lock
   struct aio_info {
-    struct iocb iocb;
+    struct iocb iocb {};
     bufferlist bl;
     struct iovec *iov;
     bool done;
@@ -301,7 +308,7 @@ private:
   int set_throttle_params();
   const char** get_tracked_conf_keys() const override;
   void handle_conf_change(
-    const struct md_config_t *conf,
+    const md_config_t *conf,
     const std::set <std::string> &changed) override {
     for (const char **i = get_tracked_conf_keys();
 	 *i;
@@ -383,8 +390,10 @@ private:
   } write_finish_thread;
 
   off64_t get_top() const {
-    return ROUND_UP_TO(sizeof(header), block_size);
+    return round_up_to(sizeof(header), block_size);
   }
+
+  ZTracer::Endpoint trace_endpoint;
 
  public:
   FileJournal(CephContext* cct, uuid_d fsid, Finisher *fin, Cond *sync_cond,
@@ -420,14 +429,15 @@ private:
     write_stop(true),
     aio_stop(true),
     write_thread(this),
-    write_finish_thread(this) {
+    write_finish_thread(this),
+    trace_endpoint("0.0.0.0", 0, "FileJournal") {
 
       if (aio && !directio) {
 	lderr(cct) << "FileJournal::_open_any: aio not supported without directio; disabling aio" << dendl;
         aio = false;
       }
 #ifndef HAVE_LIBAIO
-      if (aio) {
+      if (aio && ::getenv("CEPH_DEV") == NULL) {
 	lderr(cct) << "FileJournal::_open_any: libaio not compiled in; disabling aio" << dendl;
         aio = false;
       }

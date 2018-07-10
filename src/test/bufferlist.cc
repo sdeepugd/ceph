@@ -19,13 +19,13 @@
  *
  */
 
-#include "include/memory.h"
 #include <limits.h>
 #include <errno.h>
 #include <sys/uio.h>
 
 #include "include/buffer.h"
 #include "include/utime.h"
+#include "include/coredumpctl.h"
 #include "include/encoding.h"
 #include "common/environment.h"
 #include "common/Clock.h"
@@ -35,6 +35,8 @@
 #include "stdlib.h"
 #include "fcntl.h"
 #include "sys/stat.h"
+#include "include/crc32c.h"
+#include "common/sctp_crc32.h"
 
 #define MAX_TEST 1000000
 #define FILENAME "bufferlist"
@@ -86,6 +88,7 @@ TEST(Buffer, constructors) {
     history_alloc_bytes += len;
     history_alloc_num++;
     EXPECT_EQ(0, ::memcmp(clone.c_str(), ptr.c_str(), len));
+    delete [] str;
   }
   //
   // buffer::create_static
@@ -216,6 +219,7 @@ TEST(Buffer, constructors) {
     snprintf(cmd, sizeof(cmd), "echo ABC > %s", FILENAME);
     EXPECT_EQ(0, ::system(cmd));
     int fd = ::open(FILENAME, O_RDONLY);
+    assert (fd >= 0);
     bufferptr ptr(buffer::create_zero_copy(zc_len, fd, NULL));
     history_alloc_bytes += zc_len;
     history_alloc_num++;
@@ -392,10 +396,11 @@ TEST_F(TestRawPipe, buffer_list_write_fd_zero_copy) {
   EXPECT_EQ(0, bl.read_fd_zero_copy(fd, len));
   EXPECT_TRUE(bl.can_zero_copy());
   int out_fd = ::open(FILENAME, O_RDWR|O_CREAT|O_TRUNC, 0600);
+  ASSERT_NE(-1, out_fd);
   EXPECT_EQ(0, bl.write_fd_zero_copy(out_fd));
   struct stat st;
   memset(&st, 0, sizeof(st));
-  EXPECT_EQ(0, ::stat(FILENAME, &st));
+  ASSERT_EQ(0, ::stat(FILENAME, &st));
   EXPECT_EQ(len, st.st_size);
   char buf[len + 1];
   EXPECT_EQ((int)len, safe_read(out_fd, buf, len + 1));
@@ -484,6 +489,7 @@ TEST(BufferPtr, constructors) {
     EXPECT_EQ(original.get_raw(), ptr.get_raw());
     EXPECT_EQ(2, ptr.raw_nref());
     EXPECT_EQ(0, ::memcmp(original.c_str(), ptr.c_str(), len));
+    PrCtl unset_dumpable;
     EXPECT_DEATH(bufferptr(original, 0, original.length() + 1), "");
     EXPECT_DEATH(bufferptr(bufferptr(), 0, 0), "");
   }
@@ -678,12 +684,14 @@ TEST(BufferPtr, accessors) {
   EXPECT_EQ('X', ptr.c_str()[0]);
   {
     bufferptr ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(ptr.c_str(), "");
     EXPECT_DEATH(ptr[0], "");
   }
   EXPECT_EQ('X', const_ptr.c_str()[0]);
   {
     const bufferptr const_ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(const_ptr.c_str(), "");
     EXPECT_DEATH(const_ptr[0], "");
   }
@@ -702,10 +710,14 @@ TEST(BufferPtr, accessors) {
     bufferptr ptr;
     EXPECT_EQ((unsigned)0, ptr.unused_tail_length());
   }
-  EXPECT_DEATH(ptr[len], "");
-  EXPECT_DEATH(const_ptr[len], "");
+  {
+    PrCtl unset_dumpable;
+    EXPECT_DEATH(ptr[len], "");
+    EXPECT_DEATH(const_ptr[len], "");
+  }
   {
     const bufferptr const_ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(const_ptr.raw_c_str(), "");
     EXPECT_DEATH(const_ptr.raw_length(), "");
     EXPECT_DEATH(const_ptr.raw_nref(), "");
@@ -754,6 +766,7 @@ TEST(BufferPtr, is_zero) {
 TEST(BufferPtr, copy_out) {
   {
     const bufferptr ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(ptr.copy_out((unsigned)0, (unsigned)0, NULL), "");
   }
   {
@@ -789,13 +802,17 @@ TEST(BufferPtr, copy_out_bench) {
 TEST(BufferPtr, copy_in) {
   {
     bufferptr ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(ptr.copy_in((unsigned)0, (unsigned)0, NULL), "");
   }
   {
     char in[] = "ABCD";
     bufferptr ptr(2);
-    EXPECT_DEATH(ptr.copy_in((unsigned)0, strlen(in) + 1, NULL), "");
-    EXPECT_DEATH(ptr.copy_in(strlen(in) + 1, (unsigned)0, NULL), "");
+    {
+      PrCtl unset_dumpable;
+      EXPECT_DEATH(ptr.copy_in((unsigned)0, strlen(in) + 1, NULL), "");
+      EXPECT_DEATH(ptr.copy_in(strlen(in) + 1, (unsigned)0, NULL), "");
+    }
     ptr.copy_in((unsigned)0, (unsigned)2, in);
     EXPECT_EQ(in[0], ptr[0]);
     EXPECT_EQ(in[1], ptr[1]);
@@ -823,13 +840,17 @@ TEST(BufferPtr, copy_in_bench) {
 TEST(BufferPtr, append) {
   {
     bufferptr ptr;
+    PrCtl unset_dumpable;
     EXPECT_DEATH(ptr.append('A'), "");
     EXPECT_DEATH(ptr.append("B", (unsigned)1), "");
   }
   {
     bufferptr ptr(2);
-    EXPECT_DEATH(ptr.append('A'), "");
-    EXPECT_DEATH(ptr.append("B", (unsigned)1), "");
+    {
+      PrCtl unset_dumpable;
+      EXPECT_DEATH(ptr.append('A'), "");
+      EXPECT_DEATH(ptr.append("B", (unsigned)1), "");
+    }
     ptr.set_length(0);
     ptr.append('A');
     EXPECT_EQ((unsigned)1, ptr.length());
@@ -864,7 +885,10 @@ TEST(BufferPtr, append_bench) {
 TEST(BufferPtr, zero) {
   char str[] = "XXXX";
   bufferptr ptr(buffer::create_static(strlen(str), str));
-  EXPECT_DEATH(ptr.zero(ptr.length() + 1, 0), "");
+  {
+    PrCtl unset_dumpable;
+    EXPECT_DEATH(ptr.zero(ptr.length() + 1, 0), "");
+  }
   ptr.zero(1, 1);
   EXPECT_EQ('X', ptr[0]);
   EXPECT_EQ('\0', ptr[1]);
@@ -1232,6 +1256,7 @@ TEST(BufferListIterator, copy) {
     i.seek(0);
     i.copy(3, copy);
     EXPECT_EQ(0, ::memcmp(copy, expected, 3));
+    free(copy);
   }
   //
   // void buffer::list::iterator::copy_deep(unsigned len, ptr &dest)
@@ -1681,6 +1706,33 @@ TEST(BufferList, is_n_page_sized) {
   }
 }
 
+TEST(BufferList, page_aligned_appender) {
+  bufferlist bl;
+  auto a = bl.get_page_aligned_appender(5);
+  a.append("asdf", 4);
+  a.flush();
+  cout << bl << std::endl;
+  ASSERT_EQ(1u, bl.get_num_buffers());
+  a.append("asdf", 4);
+  for (unsigned n = 0; n < 3 * CEPH_PAGE_SIZE; ++n) {
+    a.append("x", 1);
+  }
+  a.flush();
+  cout << bl << std::endl;
+  ASSERT_EQ(1u, bl.get_num_buffers());
+  for (unsigned n = 0; n < 3 * CEPH_PAGE_SIZE; ++n) {
+    a.append("y", 1);
+  }
+  a.flush();
+  cout << bl << std::endl;
+  ASSERT_EQ(2u, bl.get_num_buffers());
+  for (unsigned n = 0; n < 10 * CEPH_PAGE_SIZE; ++n) {
+    a.append("asdfasdfasdf", 1);
+  }
+  a.flush();
+  cout << bl << std::endl;
+}
+
 TEST(BufferList, rebuild_aligned_size_and_memory) {
   const unsigned SIMD_ALIGN = 32;
   const unsigned BUFFER_SIZE = 67;
@@ -1742,6 +1794,17 @@ TEST(BufferList, is_zero) {
     bl.append_zero(1);
     EXPECT_TRUE(bl.is_zero());
   }
+
+  for (size_t i = 1; i <= 256; ++i) {
+    bufferlist bl;
+    bl.append_zero(i);
+    EXPECT_TRUE(bl.is_zero());
+    bl.append('A');
+    // ensure buffer is a single, contiguous before testing
+    bl.rebuild();
+    EXPECT_FALSE(bl.is_zero());
+  }
+
 }
 
 TEST(BufferList, clear) {
@@ -1751,66 +1814,6 @@ TEST(BufferList, clear) {
   bl.clear();
   EXPECT_EQ((unsigned)0, bl.length());
   EXPECT_EQ((unsigned)0, bl.get_num_buffers());
-}
-
-TEST(BufferList, push_front) {
-  //
-  // void push_front(ptr& bp)
-  //
-  {
-    bufferlist bl;
-    bufferptr ptr;
-    bl.push_front(ptr);
-    EXPECT_EQ((unsigned)0, bl.length());
-    EXPECT_EQ((unsigned)0, bl.get_num_buffers());
-  }
-  unsigned len = 17;
-  {
-    bufferlist bl;
-    bl.append('A');
-    bufferptr ptr(len);
-    ptr.c_str()[0] = 'B';
-    bl.push_front(ptr);
-    EXPECT_EQ((unsigned)(1 + len), bl.length());
-    EXPECT_EQ((unsigned)2, bl.get_num_buffers());
-    EXPECT_EQ('B', bl.front()[0]);
-    EXPECT_EQ(ptr.get_raw(), bl.front().get_raw());
-  }
-  //
-  // void push_front(raw *r)
-  //
-  {
-    bufferlist bl;
-    bl.append('A');
-    bufferptr ptr(len);
-    ptr.c_str()[0] = 'B';
-    bl.push_front(ptr.get_raw());
-    EXPECT_EQ((unsigned)(1 + len), bl.length());
-    EXPECT_EQ((unsigned)2, bl.get_num_buffers());
-    EXPECT_EQ('B', bl.front()[0]);
-    EXPECT_EQ(ptr.get_raw(), bl.front().get_raw());
-  }
-  //
-  // void push_front(ptr&& bp)
-  //
-  {
-    bufferlist bl;
-    bufferptr ptr;
-    bl.push_front(std::move(ptr));
-    EXPECT_EQ((unsigned)0, bl.length());
-    EXPECT_EQ((unsigned)0, bl.buffers().size());
-  }
-  {
-    bufferlist bl;
-    bl.append('A');
-    bufferptr ptr(len);
-    ptr.c_str()[0] = 'B';
-    bl.push_front(std::move(ptr));
-    EXPECT_EQ((unsigned)(1 + len), bl.length());
-    EXPECT_EQ((unsigned)2, bl.buffers().size());
-    EXPECT_EQ('B', bl.buffers().front()[0]);
-    EXPECT_FALSE(ptr.get_raw());
-  }
 }
 
 TEST(BufferList, push_back) {
@@ -2042,26 +2045,25 @@ TEST(BufferList, claim_append) {
   EXPECT_EQ((unsigned)0, from.length());
 }
 
-TEST(BufferList, claim_prepend) {
-  bufferlist from;
-  {
-    bufferptr ptr(2);
-    from.append(ptr);
-  }
-  bufferlist to;
-  {
-    bufferptr ptr(4);
-    to.append(ptr);
-  }
-  EXPECT_EQ((unsigned)4, to.length());
-  EXPECT_EQ((unsigned)1, to.get_num_buffers());
-  to.claim_prepend(from);
-  EXPECT_EQ((unsigned)(2 + 4), to.length());
-  EXPECT_EQ((unsigned)2, to.front().length());
-  EXPECT_EQ((unsigned)4, to.back().length());
-  EXPECT_EQ((unsigned)2, to.get_num_buffers());
-  EXPECT_EQ((unsigned)0, from.get_num_buffers());
-  EXPECT_EQ((unsigned)0, from.length());
+TEST(BufferList, claim_append_piecewise) {
+  bufferlist bl, t, dst;
+  auto a = bl.get_page_aligned_appender(4);
+  for (uint32_t i = 0; i < (CEPH_PAGE_SIZE + CEPH_PAGE_SIZE - 1333); i++)
+    a.append("x", 1);
+  a.flush();
+  const char *p = bl.c_str();
+  t.claim_append(bl);
+
+  for (uint32_t i = 0; i < (CEPH_PAGE_SIZE + 1333); i++)
+    a.append("x", 1);
+  a.flush();
+  t.claim_append(bl);
+
+  EXPECT_FALSE(t.is_aligned_size_and_memory(CEPH_PAGE_SIZE, CEPH_PAGE_SIZE));
+  dst.claim_append_piecewise(t);
+  EXPECT_TRUE(dst.is_aligned_size_and_memory(CEPH_PAGE_SIZE, CEPH_PAGE_SIZE));
+  const char *p1 = dst.c_str();
+  EXPECT_TRUE(p == p1);
 }
 
 TEST(BufferList, begin) {
@@ -2207,7 +2209,10 @@ TEST(BufferList, append) {
     bufferptr in(back);
     EXPECT_EQ((unsigned)1, bl.get_num_buffers());
     EXPECT_EQ((unsigned)1, bl.length());
-    EXPECT_DEATH(bl.append(in, (unsigned)100, (unsigned)100), "");
+    {
+      PrCtl unset_dumpable;
+      EXPECT_DEATH(bl.append(in, (unsigned)100, (unsigned)100), "");
+    }
     EXPECT_LT((unsigned)0, in.unused_tail_length());
     in.append('B');
     bl.append(in, back.end(), 1);
@@ -2278,7 +2283,7 @@ TEST(BufferList, append_zero) {
   EXPECT_EQ((unsigned)1, bl.get_num_buffers());
   EXPECT_EQ((unsigned)1, bl.length());
   bl.append_zero(1);
-  EXPECT_EQ((unsigned)2, bl.get_num_buffers());
+  EXPECT_EQ((unsigned)1, bl.get_num_buffers());
   EXPECT_EQ((unsigned)2, bl.length());
   EXPECT_EQ('\0', bl[1]);
 }
@@ -2441,6 +2446,7 @@ TEST(BufferList, read_fd) {
   bufferlist bl;
   EXPECT_EQ(-EBADF, bl.read_fd(fd, len));
   fd = ::open(FILENAME, O_RDONLY);
+  ASSERT_NE(-1, fd);
   EXPECT_EQ(len, (unsigned)bl.read_fd(fd, len));
   //EXPECT_EQ(CEPH_BUFFER_APPEND_SIZE - len, bl.front().unused_tail_length());
   EXPECT_EQ(len, bl.length());
@@ -2457,7 +2463,7 @@ TEST(BufferList, write_file) {
   EXPECT_EQ(0, bl.write_file(FILENAME, mode));
   struct stat st;
   memset(&st, 0, sizeof(st));
-  ::stat(FILENAME, &st);
+  ASSERT_EQ(0, ::stat(FILENAME, &st));
   EXPECT_EQ((unsigned)(mode | S_IFREG), st.st_mode);
   ::unlink(FILENAME);
 }
@@ -2465,6 +2471,7 @@ TEST(BufferList, write_file) {
 TEST(BufferList, write_fd) {
   ::unlink(FILENAME);
   int fd = ::open(FILENAME, O_WRONLY|O_CREAT|O_TRUNC, 0600);
+  ASSERT_NE(-1, fd);
   bufferlist bl;
   for (unsigned i = 0; i < IOV_MAX * 2; i++) {
     bufferptr ptr("A", 1);
@@ -2474,7 +2481,7 @@ TEST(BufferList, write_fd) {
   ::close(fd);
   struct stat st;
   memset(&st, 0, sizeof(st));
-  ::stat(FILENAME, &st);
+  ASSERT_EQ(0, ::stat(FILENAME, &st));
   EXPECT_EQ(IOV_MAX * 2, st.st_size);
   ::unlink(FILENAME);
 }
@@ -2482,6 +2489,7 @@ TEST(BufferList, write_fd) {
 TEST(BufferList, write_fd_offset) {
   ::unlink(FILENAME);
   int fd = ::open(FILENAME, O_WRONLY|O_CREAT|O_TRUNC, 0600);
+  ASSERT_NE(-1, fd);
   bufferlist bl;
   for (unsigned i = 0; i < IOV_MAX * 2; i++) {
     bufferptr ptr("A", 1);
@@ -2492,7 +2500,7 @@ TEST(BufferList, write_fd_offset) {
   ::close(fd);
   struct stat st;
   memset(&st, 0, sizeof(st));
-  ::stat(FILENAME, &st);
+  ASSERT_EQ(0, ::stat(FILENAME, &st));
   EXPECT_EQ(IOV_MAX * 2 + offset, (unsigned)st.st_size);
   ::unlink(FILENAME);
 }
@@ -2522,6 +2530,30 @@ TEST(BufferList, crc32c_append) {
     bl2.append(bl);
   }
   ASSERT_EQ(bl1.crc32c(0), bl2.crc32c(0));
+}
+
+TEST(BufferList, crc32c_zeros) {
+  char buffer[4*1024];
+  for (size_t i=0; i < sizeof(buffer); i++)
+  {
+    buffer[i] = i;
+  }
+
+  bufferlist bla;
+  bufferlist blb;
+
+  for (size_t j=0; j < 1000; j++)
+  {
+    bufferptr a(buffer, sizeof(buffer));
+
+    bla.push_back(a);
+    uint32_t crca = bla.crc32c(111);
+
+    blb.push_back(a);
+    uint32_t crcb = ceph_crc32c(111, (unsigned char*)blb.c_str(), blb.length());
+
+    EXPECT_EQ(crca, crcb);
+  }
 }
 
 TEST(BufferList, crc32c_append_perf) {
@@ -2591,7 +2623,6 @@ TEST(BufferList, crc32c_append_perf) {
   }
   assert(buffer::get_cached_crc() == 1 + base_cached);
   assert(buffer::get_cached_crc_adjusted() == 2 + base_cached_adjusted);
-
   {
     utime_t start = ceph_clock_now();
     uint32_t r = blb.crc32c(0);
@@ -2764,7 +2795,10 @@ TEST(BufferList, zero) {
       bufferptr ptr(s[i], strlen(s[i]));
       bl.push_back(ptr);
     }
-    EXPECT_DEATH(bl.zero((unsigned)0, (unsigned)2000), "");
+    {
+      PrCtl unset_dumpable;
+      EXPECT_DEATH(bl.zero((unsigned)0, (unsigned)2000), "");
+    }
     bl.zero((unsigned)2, (unsigned)5);
     EXPECT_EQ(0, ::memcmp("AB\0\0\0\0\0HIKLM", bl.c_str(), 9));
   }
@@ -2881,7 +2915,7 @@ TEST(BufferList, TestCloneNonShareable) {
 
 TEST(BufferList, TestCopyAll) {
   const static size_t BIG_SZ = 10737414;
-  ceph::shared_ptr <unsigned char> big(
+  std::shared_ptr <unsigned char> big(
       (unsigned char*)malloc(BIG_SZ), free);
   unsigned char c = 0;
   for (size_t i = 0; i < BIG_SZ; ++i) {
@@ -2893,7 +2927,7 @@ TEST(BufferList, TestCopyAll) {
   bufferlist bl2;
   i.copy_all(bl2);
   ASSERT_EQ(bl2.length(), BIG_SZ);
-  ceph::shared_ptr <unsigned char> big2(
+  std::shared_ptr <unsigned char> big2(
       (unsigned char*)malloc(BIG_SZ), free);
   bl2.copy(0, BIG_SZ, (char*)big2.get());
   ASSERT_EQ(memcmp(big.get(), big2.get(), BIG_SZ), 0);
@@ -2901,7 +2935,7 @@ TEST(BufferList, TestCopyAll) {
 
 TEST(BufferList, InvalidateCrc) {
   const static size_t buffer_size = 262144;
-  ceph::shared_ptr <unsigned char> big(
+  std::shared_ptr <unsigned char> big(
       (unsigned char*)malloc(buffer_size), free);
   unsigned char c = 0;
   char* ptr = (char*) big.get();

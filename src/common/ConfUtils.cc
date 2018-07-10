@@ -13,17 +13,9 @@
  */
 
 #include <algorithm>
-#include <errno.h>
-#include <list>
 #include <map>
 #include <sstream>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <string>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <iostream>
 
 #include "include/buffer.h"
@@ -31,7 +23,6 @@
 #include "common/utf8.h"
 #include "common/ConfUtils.h"
 
-using std::cerr;
 using std::ostringstream;
 using std::pair;
 using std::string;
@@ -261,6 +252,10 @@ trim_whitespace(std::string &str, bool strip_internal)
 std::string ConfFile::
 normalize_key_name(const std::string &key)
 {
+  if (key.find_first_of(" \t\r\n\f\v\xa0") == string::npos) {
+    return key;
+  }
+
   string k(key);
   ConfFile::trim_whitespace(k, true);
   std::replace(k.begin(), k.end(), ' ', '_');

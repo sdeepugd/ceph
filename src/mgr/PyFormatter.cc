@@ -17,6 +17,8 @@
 
 #include "PyFormatter.h"
 
+#define LARGE_SIZE 1024
+
 
 void PyFormatter::open_array_section(const char *name)
 {
@@ -53,9 +55,9 @@ void PyFormatter::dump_float(const char *name, double d)
   dump_pyobject(name, PyFloat_FromDouble(d));
 }
 
-void PyFormatter::dump_string(const char *name, const std::string& s)
+void PyFormatter::dump_string(const char *name, std::string_view s)
 {
-  dump_pyobject(name, PyString_FromString(s.c_str()));
+  dump_pyobject(name, PyString_FromString(s.data()));
 }
 
 void PyFormatter::dump_bool(const char *name, bool b)
@@ -85,8 +87,10 @@ std::ostream& PyFormatter::dump_stream(const char *name)
 
 void PyFormatter::dump_format_va(const char *name, const char *ns, bool quoted, const char *fmt, va_list ap)
 {
-  // TODO
-  ceph_abort();
+  char buf[LARGE_SIZE];
+  vsnprintf(buf, LARGE_SIZE, fmt, ap);
+
+  dump_pyobject(name, PyString_FromString(buf));
 }
 
 /**

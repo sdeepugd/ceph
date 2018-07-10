@@ -22,8 +22,8 @@ WBThrottle::WBThrottle(CephContext *cct) :
   PerfCountersBuilder b(
     cct, string("WBThrottle"),
     l_wbthrottle_first, l_wbthrottle_last);
-  b.add_u64(l_wbthrottle_bytes_dirtied, "bytes_dirtied", "Dirty data");
-  b.add_u64(l_wbthrottle_bytes_wb, "bytes_wb", "Written data");
+  b.add_u64(l_wbthrottle_bytes_dirtied, "bytes_dirtied", "Dirty data", NULL, 0, unit_t(UNIT_BYTES));
+  b.add_u64(l_wbthrottle_bytes_wb, "bytes_wb", "Written data", NULL, 0, unit_t(UNIT_BYTES));
   b.add_u64(l_wbthrottle_ios_dirtied, "ios_dirtied", "Dirty operations");
   b.add_u64(l_wbthrottle_ios_wb, "ios_wb", "Written operations");
   b.add_u64(l_wbthrottle_inodes_dirtied, "inodes_dirtied", "Entries waiting for write");
@@ -135,7 +135,7 @@ bool WBThrottle::get_next_should_flush(
 {
   assert(lock.is_locked());
   assert(next);
-  while (!stopping && !beyond_limit())
+  while (!stopping && (!beyond_limit() || pending_wbs.empty()))
          cond.Wait(lock);
   if (stopping)
     return false;
@@ -165,7 +165,7 @@ void *WBThrottle::entry()
     logger->dec(l_wbthrottle_inodes_dirtied);
     logger->inc(l_wbthrottle_inodes_wb);
     lock.Unlock();
-#ifdef HAVE_FDATASYNC
+#if defined(HAVE_FDATASYNC)
     ::fdatasync(**wb.get<1>());
 #else
     ::fsync(**wb.get<1>());

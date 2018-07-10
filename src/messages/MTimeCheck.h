@@ -25,9 +25,9 @@ struct MTimeCheck : public Message
     OP_REPORT = 3,
   };
 
-  int op;
-  version_t epoch;
-  version_t round;
+  int op = 0;
+  version_t epoch = 0;
+  version_t round = 0;
 
   utime_t timestamp;
   map<entity_inst_t, double> skews;
@@ -65,22 +65,23 @@ public:
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(op, p);
-    ::decode(epoch, p);
-    ::decode(round, p);
-    ::decode(timestamp, p);
-    ::decode(skews, p);
-    ::decode(latencies, p);
+    auto p = payload.cbegin();
+    decode(op, p);
+    decode(epoch, p);
+    decode(round, p);
+    decode(timestamp, p);
+    decode(skews, p);
+    decode(latencies, p);
   }
 
   void encode_payload(uint64_t features) override {
-    ::encode(op, payload);
-    ::encode(epoch, payload);
-    ::encode(round, payload);
-    ::encode(timestamp, payload);
-    ::encode(skews, payload, features);
-    ::encode(latencies, payload, features);
+    using ceph::encode;
+    encode(op, payload);
+    encode(epoch, payload);
+    encode(round, payload);
+    encode(timestamp, payload);
+    encode(skews, payload, features);
+    encode(latencies, payload, features);
   }
 };
 

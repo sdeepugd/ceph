@@ -17,7 +17,6 @@
 #include "rgw_common.h"
 #include "rgw_keystone.h"
 #include "rgw_auth_keystone.h"
-#include "rgw_keystone.h"
 #include "rgw_rest_s3.h"
 #include "rgw_auth_s3.h"
 
@@ -70,7 +69,7 @@ TokenEngine::get_from_keystone(const std::string& token) const
   /* The container for plain response obtained from Keystone. It will be
    * parsed token_envelope_t::parse method. */
   ceph::bufferlist token_body_bl;
-  RGWValidateKeystoneToken validate(cct, &token_body_bl);
+  RGWValidateKeystoneToken validate(cct, "GET", "", &token_body_bl);
 
   std::string url = config.get_endpoint_url();
   if (url.empty()) {
@@ -94,15 +93,15 @@ TokenEngine::get_from_keystone(const std::string& token) const
   validate.append_header("X-Auth-Token", admin_token);
   validate.set_send_length(0);
 
-  int ret = validate.process(url.c_str());
+  validate.set_url(url);
+
+  int ret = validate.process();
   if (ret < 0) {
     throw ret;
   }
 
   /* NULL terminate for debug output. */
   token_body_bl.append(static_cast<char>(0));
-  ldout(cct, 20) << "received response status=" << validate.get_http_status()
-                 << ", body=" << token_body_bl.c_str() << dendl;
 
   /* Detect Keystone rejection earlier than during the token parsing.
    * Although failure at the parsing phase doesn't impose a threat,
@@ -114,8 +113,13 @@ TokenEngine::get_from_keystone(const std::string& token) const
       validate.get_http_status() ==
           /* Most likely: non-existent token supplied by the client. */
           RGWValidateKeystoneToken::HTTP_STATUS_NOTFOUND) {
+    ldout(cct, 5) << "Failed keystone auth from " << url << " with "
+                  << validate.get_http_status() << dendl;
     return boost::none;
   }
+
+  ldout(cct, 20) << "received response status=" << validate.get_http_status()
+                 << ", body=" << token_body_bl.c_str() << dendl;
 
   TokenEngine::token_envelope_t token_body;
   ret = token_body.parse(cct, token, token_body_bl, config.get_api_version());
@@ -209,7 +213,7 @@ TokenEngine::authenticate(const std::string& token,
   /* This will be initialized on the first call to this method. In C++11 it's
    * also thread-safe. */
   static const struct RolesCacher {
-    RolesCacher(CephContext* const cct) {
+    explicit RolesCacher(CephContext* const cct) {
       get_str_vec(cct->_conf->rgw_keystone_accepted_roles, plain);
       get_str_vec(cct->_conf->rgw_keystone_accepted_admin_roles, admin);
 
@@ -262,7 +266,7 @@ TokenEngine::authenticate(const std::string& token,
     ldout(cct, 0) << "got expired token: " << t->get_project_name()
                   << ":" << t->get_user_name()
                   << " expired: " << t->get_expires() << dendl;
-    return result_t::deny();
+    return result_t::deny(-EPERM);
   }
 
   /* Check for necessary roles. */
@@ -281,7 +285,7 @@ TokenEngine::authenticate(const std::string& token,
   ldout(cct, 0) << "user does not hold a matching role; required roles: "
                 << g_conf->rgw_keystone_accepted_roles << dendl;
 
-  return result_t::deny();
+  return result_t::deny(-EPERM);
 }
 
 
@@ -289,9 +293,9 @@ TokenEngine::authenticate(const std::string& token,
  * Try to validate S3 auth against keystone s3token interface
  */
 std::pair<boost::optional<rgw::keystone::TokenEnvelope>, int>
-EC2Engine::get_from_keystone(const std::string& access_key_id,
+EC2Engine::get_from_keystone(const boost::string_view& access_key_id,
                              const std::string& string_to_sign,
-                             const std::string& signature) const
+                             const boost::string_view& signature) const
 {
   /* prepare keystone url */
   std::string keystone_url = config.get_endpoint_url();
@@ -322,7 +326,7 @@ EC2Engine::get_from_keystone(const std::string& access_key_id,
   /* The container for plain response obtained from Keystone. It will be
    * parsed token_envelope_t::parse method. */
   ceph::bufferlist token_body_bl;
-  RGWValidateKeystoneToken validate(cct, &token_body_bl);
+  RGWValidateKeystoneToken validate(cct, "POST", keystone_url, &token_body_bl);
 
   /* set required headers for keystone request */
   validate.append_header("X-Auth-Token", admin_token);
@@ -335,9 +339,9 @@ EC2Engine::get_from_keystone(const std::string& access_key_id,
   JSONFormatter credentials(false);
   credentials.open_object_section("");
   credentials.open_object_section("credentials");
-  credentials.dump_string("access", access_key_id);
+  credentials.dump_string("access", sview2cstr(access_key_id).data());
   credentials.dump_string("token", rgw::to_base64(string_to_sign));
-  credentials.dump_string("signature", signature);
+  credentials.dump_string("signature", sview2cstr(signature).data());
   credentials.close_section();
   credentials.close_section();
 
@@ -347,7 +351,7 @@ EC2Engine::get_from_keystone(const std::string& access_key_id,
   validate.set_send_length(os.str().length());
 
   /* send request */
-  ret = validate.process("POST", keystone_url.c_str());
+  ret = validate.process();
   if (ret < 0) {
     ldout(cct, 2) << "s3 keystone: token validation ERROR: "
                   << token_body_bl.c_str() << dendl;
@@ -413,16 +417,19 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
   };
 }
 
-rgw::auth::Engine::result_t EC2Engine::authenticate(const std::string& access_key_id,
-                                                    const std::string& signature,
-                                                    const std::string& string_to_sign,
-                                                    /* Passthorugh only! */
-                                                    const req_state* s) const
+rgw::auth::Engine::result_t EC2Engine::authenticate(
+  const boost::string_view& access_key_id,
+  const boost::string_view& signature,
+  const string_to_sign_t& string_to_sign,
+  const signature_factory_t&,
+  const completer_factory_t& completer_factory,
+  /* Passthorugh only! */
+  const req_state* s) const
 {
   /* This will be initialized on the first call to this method. In C++11 it's
    * also thread-safe. */
   static const struct RolesCacher {
-    RolesCacher(CephContext* const cct) {
+    explicit RolesCacher(CephContext* const cct) {
       get_str_vec(cct->_conf->rgw_keystone_accepted_roles, plain);
       get_str_vec(cct->_conf->rgw_keystone_accepted_admin_roles, admin);
 
@@ -472,7 +479,7 @@ rgw::auth::Engine::result_t EC2Engine::authenticate(const std::string& access_ke
 
     auto apl = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
                                               get_creds_info(*t, accepted_roles.admin));
-    return result_t::grant(std::move(apl));
+    return result_t::grant(std::move(apl), completer_factory(boost::none));
   }
 }
 

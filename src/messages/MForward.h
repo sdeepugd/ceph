@@ -35,7 +35,7 @@ struct MForward : public Message {
   string msg_desc;  // for operator<< only
   
   static const int HEAD_VERSION = 3;
-  static const int COMPAT_VERSION = 1;
+  static const int COMPAT_VERSION = 3;
 
   MForward() : Message(MSG_FORWARD, HEAD_VERSION, COMPAT_VERSION),
                tid(0), con_features(0), msg(NULL) {}
@@ -69,9 +69,10 @@ private:
 
 public:
   void encode_payload(uint64_t features) override {
-    ::encode(tid, payload);
-    ::encode(client, payload, features);
-    ::encode(client_caps, payload, features);
+    using ceph::encode;
+    encode(tid, payload);
+    encode(client, payload, features);
+    encode(client_caps, payload, features);
     // Encode client message with intersection of target and source
     // features.  This could matter if the semantics of the encoded
     // message are changed when reencoding with more features than the
@@ -81,30 +82,18 @@ public:
       msg->clear_payload();
     }
     encode_message(msg, features & con_features, payload);
-    ::encode(con_features, payload);
-    ::encode(entity_name, payload);
+    encode(con_features, payload);
+    encode(entity_name, payload);
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(tid, p);
-    ::decode(client, p);
-    ::decode(client_caps, p);
+    auto p = payload.cbegin();
+    decode(tid, p);
+    decode(client, p);
+    decode(client_caps, p);
     msg = (PaxosServiceMessage *)decode_message(NULL, 0, p);
-    if (header.version >= 2) {
-      ::decode(con_features, p);
-    } else {
-      con_features = 0;
-    }
-    if (header.version >= 3) {
-      ::decode(entity_name, p);
-    } else {
-      // we are able to know the entity type, obtaining it from the
-      // entity_name_t on 'client', but we have no idea about the
-      // entity name, so we'll just use a friendly '?' instead.
-      entity_name.set(client.name.type(), "?");
-    }
-
+    decode(con_features, p);
+    decode(entity_name, p);
   }
 
   PaxosServiceMessage *claim_message() {

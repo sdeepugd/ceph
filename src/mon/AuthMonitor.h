@@ -17,8 +17,8 @@
 
 #include <map>
 #include <set>
-using namespace std;
 
+#include "global/global_init.h"
 #include "include/ceph_features.h"
 #include "include/types.h"
 #include "mon/PaxosService.h"
@@ -47,41 +47,42 @@ public:
     Incremental() : inc_type(GLOBAL_ID), max_global_id(0), auth_type(0) {}
 
     void encode(bufferlist& bl, uint64_t features=-1) const {
+      using ceph::encode;
       if ((features & CEPH_FEATURE_MONENC) == 0) {
 	__u8 v = 1;
-	::encode(v, bl);
+	encode(v, bl);
 	__u32 _type = (__u32)inc_type;
-	::encode(_type, bl);
+	encode(_type, bl);
 	if (_type == GLOBAL_ID) {
-	  ::encode(max_global_id, bl);
+	  encode(max_global_id, bl);
 	} else {
-	  ::encode(auth_type, bl);
-	  ::encode(auth_data, bl);
+	  encode(auth_type, bl);
+	  encode(auth_data, bl);
 	}
 	return;
       } 
       ENCODE_START(2, 2, bl);
       __u32 _type = (__u32)inc_type;
-      ::encode(_type, bl);
+      encode(_type, bl);
       if (_type == GLOBAL_ID) {
-	::encode(max_global_id, bl);
+	encode(max_global_id, bl);
       } else {
-	::encode(auth_type, bl);
-	::encode(auth_data, bl);
+	encode(auth_type, bl);
+	encode(auth_data, bl);
       }
       ENCODE_FINISH(bl);
     }
-    void decode(bufferlist::iterator& bl) {
+    void decode(bufferlist::const_iterator& bl) {
       DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
       __u32 _type;
-      ::decode(_type, bl);
+      decode(_type, bl);
       inc_type = (IncType)_type;
       assert(inc_type >= GLOBAL_ID && inc_type <= AUTH_DATA);
       if (_type == GLOBAL_ID) {
-	::decode(max_global_id, bl);
+	decode(max_global_id, bl);
       } else {
-	::decode(auth_type, bl);
-	::decode(auth_data, bl);
+	decode(auth_type, bl);
+	decode(auth_data, bl);
       }
       DECODE_FINISH(bl);
     }
@@ -103,12 +104,21 @@ public:
     }
   };
 
+  struct auth_entity_t {
+    EntityName name;
+    EntityAuth auth;
+  };
+
+
 private:
   vector<Incremental> pending_auth;
   version_t last_rotating_ver;
   uint64_t max_global_id;
   uint64_t last_allocated_id;
 
+  bool _upgrade_format_to_dumpling();
+  bool _upgrade_format_to_luminous();
+  bool _upgrade_format_to_mimic();
   void upgrade_format() override;
 
   void export_keyring(KeyRing& keyring);
@@ -117,27 +127,19 @@ private:
   void push_cephx_inc(KeyServerData::Incremental& auth_inc) {
     Incremental inc;
     inc.inc_type = AUTH_DATA;
-    ::encode(auth_inc, inc.auth_data);
+    encode(auth_inc, inc.auth_data);
     inc.auth_type = CEPH_AUTH_CEPHX;
     pending_auth.push_back(inc);
   }
 
-  /* validate mon caps ; don't care about caps for other services as
-   * we don't know how to validate them */
-  bool valid_caps(const vector<string>& caps, ostream *out) {
-    for (vector<string>::const_iterator p = caps.begin();
-         p != caps.end(); p += 2) {
-      if (!p->empty() && *p != "mon")
-        continue;
-      MonCap tmp;
-      if (!tmp.parse(*(p+1), out))
-        return false;
-    }
-    return true;
-  }
+  /* validate mon/osd/mds caps; fail on unrecognized service/type */
+  bool valid_caps(const string& type, const string& caps, ostream *out);
+  bool valid_caps(const vector<string>& caps, ostream *out);
 
   void on_active() override;
   bool should_propose(double& delay) override;
+  void get_initial_keyring(KeyRing *keyring);
+  void create_initial_keys(KeyRing *keyring);
   void create_initial() override;
   void update_from_paxos(bool *need_bootstrap) override;
   void create_pending() override;  // prepare a new pending
@@ -147,7 +149,7 @@ private:
   // propose pending update to peers
   void encode_pending(MonitorDBStore::TransactionRef t) override;
   void encode_full(MonitorDBStore::TransactionRef t) override;
-  version_t get_trim_to() override;
+  version_t get_trim_to() const override;
 
   bool preprocess_query(MonOpRequestRef op) override;  // true if processed.
   bool prepare_update(MonOpRequestRef op) override;
@@ -158,6 +160,23 @@ private:
   bool prepare_command(MonOpRequestRef op);
 
   bool check_rotate();
+
+  bool entity_is_pending(EntityName& entity);
+  int exists_and_matches_entity(
+      const auth_entity_t& entity,
+      bool has_secret,
+      stringstream& ss);
+  int exists_and_matches_entity(
+      const EntityName& name,
+      const EntityAuth& auth,
+      const map<string,bufferlist>& caps,
+      bool has_secret,
+      stringstream& ss);
+  int remove_entity(const EntityName &entity);
+  int add_entity(
+      const EntityName& name,
+      const EntityAuth& auth);
+
  public:
   AuthMonitor(Monitor *mn, Paxos *p, const string& service_name)
     : PaxosService(mn, p, service_name),
@@ -167,10 +186,45 @@ private:
   {}
 
   void pre_auth(MAuth *m);
-  
+
   void tick() override;  // check state, take actions
 
+  int validate_osd_destroy(
+      int32_t id,
+      const uuid_d& uuid,
+      EntityName& cephx_entity,
+      EntityName& lockbox_entity,
+      stringstream& ss);
+  int do_osd_destroy(
+      const EntityName& cephx_entity,
+      const EntityName& lockbox_entity);
+
+  int do_osd_new(
+      const auth_entity_t& cephx_entity,
+      const auth_entity_t& lockbox_entity,
+      bool has_lockbox);
+  int validate_osd_new(
+      int32_t id,
+      const uuid_d& uuid,
+      const string& cephx_secret,
+      const string& lockbox_secret,
+      auth_entity_t& cephx_entity,
+      auth_entity_t& lockbox_entity,
+      stringstream& ss);
+
   void dump_info(Formatter *f);
+
+  bool is_valid_cephx_key(const string& k) {
+    if (k.empty())
+      return false;
+
+    EntityAuth ea;
+    try {
+      ea.key.decode_base64(k);
+      return true;
+    } catch (buffer::error& e) { /* fallthrough */ }
+    return false;
+  }
 };
 
 

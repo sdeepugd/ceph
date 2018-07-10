@@ -19,7 +19,7 @@
 class MMonScrub : public Message
 {
   static const int HEAD_VERSION = 2;
-  static const int COMPAT_VERSION = 1;
+  static const int COMPAT_VERSION = 2;
 
 public:
   typedef enum {
@@ -35,8 +35,8 @@ public:
     }
   }
 
-  op_type_t op;
-  version_t version;
+  op_type_t op = OP_SCRUB;
+  version_t version = 0;
   ScrubResult result;
   int32_t num_keys;
   pair<string,string> key;
@@ -64,25 +64,24 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
+    using ceph::encode;
     uint8_t o = op;
-    ::encode(o, payload);
-    ::encode(version, payload);
-    ::encode(result, payload);
-    ::encode(num_keys, payload);
-    ::encode(key, payload);
+    encode(o, payload);
+    encode(version, payload);
+    encode(result, payload);
+    encode(num_keys, payload);
+    encode(key, payload);
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
+    auto p = payload.cbegin();
     uint8_t o;
-    ::decode(o, p);
+    decode(o, p);
     op = (op_type_t)o;
-    ::decode(version, p);
-    ::decode(result, p);
-    if (header.version >= 2) {
-      ::decode(num_keys, p);
-      ::decode(key, p);
-    }
+    decode(version, p);
+    decode(result, p);
+    decode(num_keys, p);
+    decode(key, p);
   }
 };
 

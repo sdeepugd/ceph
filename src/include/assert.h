@@ -22,9 +22,9 @@
 # include "acconfig.h"
 #endif
 
+#ifdef __cplusplus
 class CephContext;
 
-#ifdef __cplusplus
 namespace ceph {
 
 struct BackTrace;
@@ -62,17 +62,35 @@ struct BackTrace;
 # define __CEPH_ASSERT_FUNCTION ((__const char *) 0)
 #endif
 
+#ifdef __cplusplus
 extern void register_assert_context(CephContext *cct);
+#endif
+
+struct assert_data {
+  const char *assertion;
+  const char *file;
+  const int line;
+  const char *function;
+};
+
 extern void __ceph_assert_fail(const char *assertion, const char *file, int line, const char *function)
   __attribute__ ((__noreturn__));
+extern void __ceph_assert_fail(const assert_data &ctx)
+  __attribute__ ((__noreturn__));
+
 extern void __ceph_assertf_fail(const char *assertion, const char *file, int line, const char *function, const char* msg, ...)
   __attribute__ ((__noreturn__));
 extern void __ceph_assert_warn(const char *assertion, const char *file, int line, const char *function);
 
+#ifdef __cplusplus
+# define _CEPH_ASSERT_VOID_CAST static_cast<void>
+#else
+# define _CEPH_ASSERT_VOID_CAST (void)
+#endif
 
 #define assert_warn(expr)							\
   ((expr)								\
-   ? static_cast<void> (0)				\
+   ? _CEPH_ASSERT_VOID_CAST (0)					\
    : __ceph_assert_warn (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION))
 
 #ifdef __cplusplus
@@ -113,36 +131,43 @@ using namespace ceph;
 #undef __ASSERT_FUNCTION
 #define __ASSERT_FUNCTION
 
-#define assert(expr)							\
-  ((expr)								\
-   ? static_cast<void> (0)				\
-   : __ceph_assert_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION))
+#define assert(expr) \
+  do { static const ceph::assert_data assert_data_ctx = \
+   {__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION}; \
+   ((expr) \
+   ? _CEPH_ASSERT_VOID_CAST (0)	\
+   : __ceph_assert_fail(assert_data_ctx)); } while(false)
+
 #define ceph_assert(expr)							\
-  ((expr)								\
-   ? static_cast<void> (0)				\
-   : __ceph_assert_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION))
+  do { static const ceph::assert_data assert_data_ctx = \
+   {__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION}; \
+   ((expr) \
+   ? _CEPH_ASSERT_VOID_CAST (0) \
+   : __ceph_assert_fail(assert_data_ctx)); } while(false)
 
 // this variant will *never* get compiled out to NDEBUG in the future.
 // (ceph_assert currently doesn't either, but in the future it might.)
 #define ceph_assert_always(expr)							\
-  ((expr)								\
-   ? static_cast<void> (0)				\
-   : __ceph_assert_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION))
+  do { static const ceph::assert_data assert_data_ctx = \
+   {__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION}; \
+   ((expr) \
+   ? _CEPH_ASSERT_VOID_CAST (0) \
+   : __ceph_assert_fail(assert_data_ctx)); } while(false)
 
 // Named by analogy with printf.  Along with an expression, takes a format
 // string and parameters which are printed if the assertion fails.
 #define assertf(expr, ...)                  \
   ((expr)								\
-   ? static_cast<void> (0)				\
+   ? _CEPH_ASSERT_VOID_CAST (0)					\
    : __ceph_assertf_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION, __VA_ARGS__))
 #define ceph_assertf(expr, ...)                  \
   ((expr)								\
-   ? static_cast<void> (0)				\
+   ? _CEPH_ASSERT_VOID_CAST (0)					\
    : __ceph_assertf_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION, __VA_ARGS__))
 
 // this variant will *never* get compiled out to NDEBUG in the future.
 // (ceph_assertf currently doesn't either, but in the future it might.)
 #define ceph_assertf_always(expr, ...)                  \
   ((expr)								\
-   ? static_cast<void> (0)				\
+   ? _CEPH_ASSERT_VOID_CAST (0)					\
    : __ceph_assertf_fail (__STRING(expr), __FILE__, __LINE__, __CEPH_ASSERT_FUNCTION, __VA_ARGS__))

@@ -48,6 +48,8 @@ extern "C" {
 #define LIBRADOS_VERSION_CODE LIBRADOS_VERSION(LIBRADOS_VER_MAJOR, LIBRADOS_VER_MINOR, LIBRADOS_VER_EXTRA)
 
 #define LIBRADOS_SUPPORTS_WATCH 1
+#define LIBRADOS_SUPPORTS_SERVICES 1
+#define LIBRADOS_SUPPORTS_APP_METADATA 1
 
 /* RADOS lock flags
  * They are also defined in cls_lock_types.h. Keep them in sync!
@@ -107,7 +109,7 @@ enum {
 
 /**
  * @name Operation Flags
- * Flags for rados_read_op_opeprate(), rados_write_op_operate(),
+ * Flags for rados_read_op_operate(), rados_write_op_operate(),
  * rados_aio_read_op_operate(), and rados_aio_write_op_operate().
  * See librados.hpp for details.
  * @{
@@ -128,6 +130,8 @@ enum {
    * Mainly for delete op
    */
   LIBRADOS_OPERATION_FULL_FORCE		= 128,
+  LIBRADOS_OPERATION_IGNORE_REDIRECT	= 256,
+  LIBRADOS_OPERATION_ORDERSNAP          = 512,
 };
 /** @} */
 
@@ -317,7 +321,7 @@ struct rados_cluster_stat_t {
  * - Creating objects: rados_write_op_create()
  * - IO on objects: rados_write_op_append(), rados_write_op_write(), rados_write_op_zero
  *   rados_write_op_write_full(), rados_write_op_writesame(), rados_write_op_remove,
- *   rados_write_op_truncate(), rados_write_op_zero()
+ *   rados_write_op_truncate(), rados_write_op_zero(), rados_write_op_cmpext()
  * - Hints: rados_write_op_set_alloc_hint()
  * - Performing the operation: rados_write_op_operate(), rados_aio_write_op_operate()
  */
@@ -336,7 +340,8 @@ typedef void *rados_write_op_t;
  *   rados_read_op_omap_cmp()
  * - Object properties: rados_read_op_stat(), rados_read_op_assert_exists(),
  *   rados_read_op_assert_version()
- * - IO on objects: rados_read_op_read(), rados_read_op_checksum()
+ * - IO on objects: rados_read_op_read(), rados_read_op_checksum(),
+ *   rados_read_op_cmpext()
  * - Custom operations: rados_read_op_exec(), rados_read_op_exec_user_buf()
  * - Request properties: rados_read_op_set_flags()
  * - Performing the operation: rados_read_op_operate(),
@@ -351,6 +356,12 @@ typedef void *rados_read_op_t;
  * until the operation is complete or safe.
  */
 typedef void *rados_completion_t;
+
+/**
+ * @struct blkin_trace_info
+ * blkin trace information for Zipkin tracing
+ */
+struct blkin_trace_info;
 
 /**
  * Get the version of librados.
@@ -483,7 +494,7 @@ CEPH_RADOS_API void rados_shutdown(rados_t cluster);
  * - log_file, log_to_stderr, err_to_stderr, and log_to_syslog
  * - debug_rados, debug_objecter, debug_monc, debug_auth, or debug_ms
  *
- * All possible options can be found in src/common/config_opts.h in ceph.git
+ * See docs.ceph.com for information about available configuration options`
  *
  * @{
  */
@@ -648,6 +659,8 @@ CEPH_RADOS_API int rados_wait_for_latest_osdmap(rados_t cluster);
  * If len is too short to fit all the pool name entries we need, we will fill
  * as much as we can.
  *
+ * Buf may be null to determine the buffer size needed to list all pools.
+ *
  * @param cluster cluster handle
  * @param buf output buffer
  * @param len output buffer length
@@ -695,6 +708,20 @@ CEPH_RADOS_API rados_config_t rados_cct(rados_t cluster);
 CEPH_RADOS_API uint64_t rados_get_instance_id(rados_t cluster);
 
 /**
+ * Gets the minimum compatible client version
+ *
+ * @param cluster cluster handle
+ * @param[out] min_compat_client minimum compatible client version
+ *  based upon the current features
+ * @param[out] require_min_compat_client required minimum client version
+ *  based upon explicit setting
+ * @returns 0 on sucess, negative error code on failure
+ */
+CEPH_RADOS_API int rados_get_min_compatible_client(rados_t cluster,
+                                                   int8_t* min_compat_client,
+                                                   int8_t* require_min_compat_client);
+
+/**
  * Create an io context
  *
  * The io context allows you to perform operations within a particular
@@ -733,7 +760,7 @@ CEPH_RADOS_API int rados_ioctx_create2(rados_t cluster, int64_t pool_id,
 CEPH_RADOS_API void rados_ioctx_destroy(rados_ioctx_t io);
 
 /**
- * Get configuration hadnle for a pool handle
+ * Get configuration handle for a pool handle
  *
  * @param io pool handle
  * @returns rados_config_t for this cluster
@@ -971,6 +998,18 @@ CEPH_RADOS_API void rados_ioctx_locator_set_key(rados_ioctx_t io,
  */
 CEPH_RADOS_API void rados_ioctx_set_namespace(rados_ioctx_t io,
                                               const char *nspace);
+
+/**
+ * Get the namespace for objects within the io context
+ *
+ * @param io the io context to query
+ * @param buf pointer to buffer where name will be stored
+ * @param maxlen size of buffer where name will be stored
+ * @returns length of string stored, or -ERANGE if buffer too small
+ */
+CEPH_RADOS_API int rados_ioctx_get_namespace(rados_ioctx_t io, char *buf,
+                                             unsigned maxlen);
+
 /** @} obj_loc */
 
 /**
@@ -1520,6 +1559,21 @@ CEPH_RADOS_API int rados_trunc(rados_ioctx_t io, const char *oid,
                                uint64_t size);
 
 /**
+ * Compare an on-disk object range with a buffer
+ *
+ * @param io the context in which to perform the comparison
+ * @param o name of the object
+ * @param cmp_buf buffer containing bytes to be compared with object contents
+ * @param cmp_len length to compare and size of @cmp_buf in bytes
+ * @param off object byte offset at which to start the comparison
+ * @returns 0 on success, negative error code on failure,
+ *  (-MAX_ERRNO - mismatch_off) on mismatch
+ */
+CEPH_RADOS_API int rados_cmpext(rados_ioctx_t io, const char *o,
+                                const char *cmp_buf, size_t cmp_len,
+                                uint64_t off);
+
+/**
  * @name Xattrs
  * Extended attributes are stored as extended attributes on the files
  * representing an object on the OSDs. Thus, they have the same
@@ -1628,9 +1682,36 @@ CEPH_RADOS_API void rados_getxattrs_end(rados_xattrs_iter_t iter);
  * @returns 0 on success, negative error code on failure
  */
 CEPH_RADOS_API int rados_omap_get_next(rados_omap_iter_t iter,
-	      		               char **key,
-			               char **val,
-			               size_t *len);
+                                       char **key,
+                                       char **val,
+                                       size_t *len);
+
+/**
+ * Get the next omap key/value pair on the object. Note that it's
+ * perfectly safe to mix calls to rados_omap_get_next and
+ * rados_omap_get_next2.
+ *
+ * @pre iter is a valid iterator
+ *
+ * @post key and val are the next key/value pair. key has length
+ * keylen and val has length vallen. If the end of the list has
+ * been reached, key and val are NULL, and keylen and vallen is 0.
+ * key and val will not be accessible after rados_omap_get_end()
+ * is called on iter, so if they are needed after that they
+ * should be copied.
+ *
+ * @param iter iterator to advance
+ * @param key where to store the key of the next omap entry
+ * @param val where to store the value of the next omap entry
+ * @param key_len where to store the number of bytes in key
+ * @param val_len where to store the number of bytes in val
+ * @returns 0 on success, negative error code on failure
+ */
+CEPH_RADOS_API int rados_omap_get_next2(rados_omap_iter_t iter,
+                                       char **key,
+                                       char **val,
+                                       size_t *key_len,
+                                       size_t *val_len);
 
 /**
  * Close the omap iterator.
@@ -2109,6 +2190,24 @@ CEPH_RADOS_API int rados_aio_flush_async(rados_ioctx_t io,
 CEPH_RADOS_API int rados_aio_stat(rados_ioctx_t io, const char *o,
 		                  rados_completion_t completion,
 		                  uint64_t *psize, time_t *pmtime);
+
+/**
+ * Asynchronously compare an on-disk object range with a buffer
+ *
+ * @param io the context in which to perform the comparison
+ * @param o the name of the object to compare with
+ * @param completion what to do when the comparison is complete
+ * @param cmp_buf buffer containing bytes to be compared with object contents
+ * @param cmp_len length to compare and size of @cmp_buf in bytes
+ * @param off object byte offset at which to start the comparison
+ * @returns 0 on success, negative error code on failure,
+ *  (-MAX_ERRNO - mismatch_off) on mismatch
+ */
+CEPH_RADOS_API int rados_aio_cmpext(rados_ioctx_t io, const char *o,
+                                    rados_completion_t completion,
+                                    const char *cmp_buf,
+                                    size_t cmp_len,
+                                    uint64_t off);
 
 /**
  * Cancel async operation
@@ -2723,6 +2822,22 @@ CEPH_RADOS_API void rados_write_op_assert_exists(rados_write_op_t write_op);
 CEPH_RADOS_API void rados_write_op_assert_version(rados_write_op_t write_op, uint64_t ver);
 
 /**
+ * Ensure that given object range (extent) satisfies comparison.
+ *
+ * @param write_op operation to add this action to
+ * @param cmp_buf buffer containing bytes to be compared with object contents
+ * @param cmp_len length to compare and size of @cmp_buf in bytes
+ * @param off object byte offset at which to start the comparison
+ * @param prval returned result of comparison, 0 on success, negative error code
+ *  on failure, (-MAX_ERRNO - mismatch_off) on mismatch
+ */
+CEPH_RADOS_API void rados_write_op_cmpext(rados_write_op_t write_op,
+                                          const char *cmp_buf,
+                                          size_t cmp_len,
+                                          uint64_t off,
+                                          int *prval);
+
+/**
  * Ensure that given xattr satisfies comparison.
  * If the comparison is not satisfied, the return code of the
  * operation will be -ECANCELED
@@ -2753,11 +2868,33 @@ CEPH_RADOS_API void rados_write_op_cmpxattr(rados_write_op_t write_op,
  * @param prval where to store the return value from this action
  */
 CEPH_RADOS_API void rados_write_op_omap_cmp(rados_write_op_t write_op,
-			                    const char *key,
-			                    uint8_t comparison_operator,
-			                    const char *val,
-			                    size_t val_len,
-			                    int *prval);
+                                            const char *key,
+                                            uint8_t comparison_operator,
+                                            const char *val,
+                                            size_t val_len,
+                                            int *prval);
+
+/**
+ * Ensure that the an omap value satisfies a comparison,
+ * with the supplied value on the right hand side (i.e.
+ * for OP_LT, the comparison is actual_value < value.
+ *
+ * @param write_op operation to add this action to
+ * @param key which omap value to compare
+ * @param comparison_operator one of LIBRADOS_CMPXATTR_OP_EQ,
+   LIBRADOS_CMPXATTR_OP_LT, or LIBRADOS_CMPXATTR_OP_GT
+ * @param val value to compare with
+ * @param key_len length of key in bytes
+ * @param val_len length of value in bytes
+ * @param prval where to store the return value from this action
+ */
+CEPH_RADOS_API void rados_write_op_omap_cmp2(rados_write_op_t write_op,
+                                            const char *key,
+                                            uint8_t comparison_operator,
+                                            const char *val,
+                                            size_t key_len,
+                                            size_t val_len,
+                                            int *prval);
 
 /**
  * Set an xattr
@@ -2888,10 +3025,27 @@ CEPH_RADOS_API void rados_write_op_exec(rados_write_op_t write_op,
  * @param num number of key/value pairs to set
  */
 CEPH_RADOS_API void rados_write_op_omap_set(rados_write_op_t write_op,
-			                    char const* const* keys,
-			                    char const* const* vals,
-			                    const size_t *lens,
-			                    size_t num);
+                                            char const* const* keys,
+                                            char const* const* vals,
+                                            const size_t *lens,
+                                            size_t num);
+
+/**
+ * Set key/value pairs on an object
+ *
+ * @param write_op operation to add this action to
+ * @param keys array of null-terminated char arrays representing keys to set
+ * @param vals array of pointers to values to set
+ * @param key_lens array of lengths corresponding to each key
+ * @param val_lens array of lengths corresponding to each value
+ * @param num number of key/value pairs to set
+ */
+CEPH_RADOS_API void rados_write_op_omap_set2(rados_write_op_t write_op,
+                                            char const* const* keys,
+                                            char const* const* vals,
+                                            const size_t *key_lens,
+                                            const size_t *val_lens,
+                                            size_t num);
 
 /**
  * Remove key/value pairs from an object
@@ -2901,8 +3055,21 @@ CEPH_RADOS_API void rados_write_op_omap_set(rados_write_op_t write_op,
  * @param keys_len number of key/value pairs to remove
  */
 CEPH_RADOS_API void rados_write_op_omap_rm_keys(rados_write_op_t write_op,
-				                char const* const* keys,
-				                size_t keys_len);
+                                                char const* const* keys,
+                                                size_t keys_len);
+
+/**
+ * Remove key/value pairs from an object
+ *
+ * @param write_op operation to add this action to
+ * @param keys array of char arrays representing keys to remove
+ * @param key_lens array of size_t values representing length of each key
+ * @param keys_len number of key/value pairs to remove
+ */
+CEPH_RADOS_API void rados_write_op_omap_rm_keys2(rados_write_op_t write_op,
+                                                char const* const* keys,
+                                                const size_t* key_lens,
+                                                size_t keys_len);
 
 /**
  * Remove all key/value pairs from an object
@@ -3024,6 +3191,22 @@ CEPH_RADOS_API void rados_read_op_assert_exists(rados_read_op_t read_op);
 CEPH_RADOS_API void rados_read_op_assert_version(rados_read_op_t read_op, uint64_t ver);
 
 /**
+ * Ensure that given object range (extent) satisfies comparison.
+ *
+ * @param read_op operation to add this action to
+ * @param cmp_buf buffer containing bytes to be compared with object contents
+ * @param cmp_len length to compare and size of @cmp_buf in bytes
+ * @param off object byte offset at which to start the comparison
+ * @param prval returned result of comparison, 0 on success, negative error code
+ *  on failure, (-MAX_ERRNO - mismatch_off) on mismatch
+ */
+CEPH_RADOS_API void rados_read_op_cmpext(rados_read_op_t read_op,
+                                         const char *cmp_buf,
+                                         size_t cmp_len,
+                                         uint64_t off,
+                                         int *prval);
+
+/**
  * Ensure that the an xattr satisfies a comparison
  * If the comparison is not satisfied, the return code of the
  * operation will be -ECANCELED
@@ -3065,11 +3248,33 @@ CEPH_RADOS_API void rados_read_op_getxattrs(rados_read_op_t read_op,
  * @param prval where to store the return value from this action
  */
 CEPH_RADOS_API void rados_read_op_omap_cmp(rados_read_op_t read_op,
-			                   const char *key,
-			                   uint8_t comparison_operator,
-			                   const char *val,
-			                   size_t val_len,
-			                   int *prval);
+                                           const char *key,
+                                           uint8_t comparison_operator,
+                                           const char *val,
+                                           size_t val_len,
+                                           int *prval);
+
+/**
+ * Ensure that the an omap value satisfies a comparison,
+ * with the supplied value on the right hand side (i.e.
+ * for OP_LT, the comparison is actual_value < value.
+ *
+ * @param read_op operation to add this action to
+ * @param key which omap value to compare
+ * @param comparison_operator one of LIBRADOS_CMPXATTR_OP_EQ,
+   LIBRADOS_CMPXATTR_OP_LT, or LIBRADOS_CMPXATTR_OP_GT
+ * @param val value to compare with
+ * @param key_len length of key in bytes
+ * @param val_len length of value in bytes
+ * @param prval where to store the return value from this action
+ */
+CEPH_RADOS_API void rados_read_op_omap_cmp2(rados_read_op_t read_op,
+                                           const char *key,
+                                           uint8_t comparison_operator,
+                                           const char *val,
+                                           size_t key_len,
+                                           size_t val_len,
+                                           int *prval);
 
 /**
  * Get object size and mtime
@@ -3273,10 +3478,29 @@ CEPH_RADOS_API void rados_read_op_omap_get_keys2(rados_read_op_t read_op,
  * @param prval where to store the return value from this action
  */
 CEPH_RADOS_API void rados_read_op_omap_get_vals_by_keys(rados_read_op_t read_op,
-					                char const* const* keys,
-					                size_t keys_len,
-					                rados_omap_iter_t *iter,
-					                int *prval);
+                                                        char const* const* keys,
+                                                        size_t keys_len,
+                                                        rados_omap_iter_t *iter,
+                                                        int *prval);
+
+/**
+ * Start iterating over specific key/value pairs
+ *
+ * They will be returned sorted by key.
+ *
+ * @param read_op operation to add this action to
+ * @param keys array of pointers to keys to get
+ * @param num_keys the number of strings in keys
+ * @param keys_len array of size_t's describing each key len (in bytes)
+ * @param iter where to store the iterator
+ * @param prval where to store the return value from this action
+ */
+CEPH_RADOS_API void rados_read_op_omap_get_vals_by_keys2(rados_read_op_t read_op,
+                                                        char const* const* keys,
+                                                        size_t num_keys,
+                                                        const size_t* key_lens,
+                                                        rados_omap_iter_t *iter,
+                                                        int *prval);
 
 /**
  * Perform a read operation synchronously
@@ -3432,6 +3656,104 @@ CEPH_RADOS_API int rados_blacklist_add(rados_t cluster,
 				       char *client_address,
 				       uint32_t expire_seconds);
 
+CEPH_RADOS_API void rados_set_osdmap_full_try(rados_ioctx_t io);
+
+CEPH_RADOS_API void rados_unset_osdmap_full_try(rados_ioctx_t io);
+
+/**
+ * Enable an application on a pool
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param force 0 if only single application per pool
+ * @returns 0 on success, negative error code on failure
+ */
+CEPH_RADOS_API int rados_application_enable(rados_ioctx_t io,
+                                            const char *app_name, int force);
+
+/**
+ * List all enabled applications
+ *
+ * If the provided buffer is too short, the required length is filled in and
+ * -ERANGE is returned. Otherwise, the buffers are filled with the application
+ * names, with a '\0' after each.
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param values buffer in which to store application names
+ * @param vals_len number of bytes in values buffer
+ * @returns 0 on success, negative error code on failure
+ * @returns -ERANGE if either buffer is too short
+ */
+CEPH_RADOS_API int rados_application_list(rados_ioctx_t io, char *values,
+                                          size_t *values_len);
+
+/**
+ * Get application metadata value from pool
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param key metadata key
+ * @param value result buffer
+ * @param value_len maximum len of value
+ * @returns 0 on success, negative error code on failure
+ */
+CEPH_RADOS_API int rados_application_metadata_get(rados_ioctx_t io,
+                                                  const char *app_name,
+                                                  const char *key, char *value,
+                                                  size_t *value_len);
+
+/**
+ * Set application metadata on a pool
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param key metadata key
+ * @param value metadata key
+ * @returns 0 on success, negative error code on failure
+ */
+CEPH_RADOS_API int rados_application_metadata_set(rados_ioctx_t io,
+                                                  const char *app_name,
+                                                  const char *key,
+                                                  const char *value);
+
+/**
+ * Remove application metadata from a pool
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param key metadata key
+ * @returns 0 on success, negative error code on failure
+ */
+CEPH_RADOS_API int rados_application_metadata_remove(rados_ioctx_t io,
+                                                     const char *app_name,
+                                                     const char *key);
+
+/**
+ * List all metadata key/value pairs associated with an application.
+ *
+ * This iterates over all metadata, key_len and val_len are filled in
+ * with the number of bytes put into the keys and values buffers.
+ *
+ * If the provided buffers are too short, the required lengths are filled
+ * in and -ERANGE is returned. Otherwise, the buffers are filled with
+ * the keys and values of the metadata, with a '\0' after each.
+ *
+ * @param ioctx pool ioctx
+ * @param app_name application name
+ * @param keys buffer in which to store key names
+ * @param keys_len number of bytes in keys buffer
+ * @param values buffer in which to store values
+ * @param vals_len number of bytes in values buffer
+ * @returns 0 on succcess, negative error code on failure
+ * @returns -ERANGE if either buffer is too short
+ */
+CEPH_RADOS_API int rados_application_metadata_list(rados_ioctx_t io,
+                                                   const char *app_name,
+                                                   char *keys, size_t *key_len,
+                                                   char *values,
+                                                   size_t *vals_len);
+
 /**
  * @name Mon/OSD/PG Commands
  *
@@ -3578,8 +3900,82 @@ typedef void (*rados_log_callback_t)(void *arg,
 				     uint64_t seq, const char *level,
 				     const char *msg);
 
+/*
+ * This is not a doxygen comment leadin, because doxygen breaks on
+ * a typedef with function params and returns, and I can't figure out
+ * how to fix it.
+ *
+ * Monitor cluster log
+ *
+ * Monitor events logged to the cluster log.  The callback get each
+ * log entry both as a single formatted line and with each field in a
+ * separate arg.
+ *
+ * Calling with a cb argument of NULL will deregister any previously
+ * registered callback.
+ *
+ * @param cluster cluster handle
+ * @param level minimum log level (debug, info, warn|warning, err|error)
+ * @param cb callback to run for each log message. It MUST NOT block
+ * nor call back into librados.
+ * @param arg void argument to pass to cb
+ *
+ * @returns 0 on success, negative code on error
+ */
+typedef void (*rados_log_callback2_t)(void *arg,
+				     const char *line,
+				     const char *channel,
+				     const char *who,
+				     const char *name,
+				     uint64_t sec, uint64_t nsec,
+				     uint64_t seq, const char *level,
+				     const char *msg);
+
 CEPH_RADOS_API int rados_monitor_log(rados_t cluster, const char *level,
                                      rados_log_callback_t cb, void *arg);
+CEPH_RADOS_API int rados_monitor_log2(rados_t cluster, const char *level,
+				      rados_log_callback2_t cb, void *arg);
+
+
+/**
+ * register daemon instance for a service
+ *
+ * Register us as a daemon providing a particular service.  We identify
+ * the service (e.g., 'rgw') and our instance name (e.g., 'rgw.$hostname').
+ * The metadata is a map of keys and values with arbitrary static metdata
+ * for this instance.  The encoding is a series of NULL-terminated strings,
+ * alternating key names and values, terminating with an empty key name.
+ * For example,  "foo\0bar\0this\0that\0\0" is the dict {foo=bar,this=that}.
+ *
+ * For the lifetime of the librados instance, regular beacons will be sent
+ * to the cluster to maintain our registration in the service map.
+ *
+ * @param cluster handle
+ * @param service service name
+ * @param daemon daemon instance name
+ * @param metadata_dict static daemon metadata dict
+ */
+CEPH_RADOS_API int rados_service_register(
+  rados_t cluster,
+  const char *service,
+  const char *daemon,
+  const char *metadata_dict);
+
+/**
+ * update daemon status
+ *
+ * Update our mutable status information in the service map.
+ *
+ * The status dict is encoded the same way the daemon metadata is encoded
+ * for rados_service_register.  For example, "foo\0bar\0this\0that\0\0" is
+ * {foo=bar,this=that}.
+ *
+ * @param cluster rados cluster handle
+ * @param status_dict status dict
+ */
+CEPH_RADOS_API int rados_service_update_status(
+  rados_t cluster,
+  const char *status_dict);
 
 /** @} Mon/OSD/PG commands */
 

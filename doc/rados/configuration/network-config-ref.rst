@@ -99,18 +99,18 @@ public network and ``{netmask}`` with the netmask for the public network. ::
    sudo iptables -A INPUT -i {iface} -p tcp -s {ip-address}/{netmask} --dport 6789 -j ACCEPT
 
 
-MDS IP Tables
--------------
+MDS and Manager IP Tables
+-------------------------
 
-A :term:`Ceph Metadata Server` listens on the first available port on the public
-network beginning at port 6800. Note that this behavior is not deterministic, so
-if you are running more than one OSD or MDS on the same host, or if you restart
-the daemons within a short window of time, the daemons will bind to higher
-ports. You should open the entire 6800-7300 range by default.  When you add the
-rule using the example below, make sure you replace ``{iface}`` with the public
-network interface (e.g., ``eth0``, ``eth1``, etc.), ``{ip-address}`` with the IP
-address of the public network and ``{netmask}`` with the netmask of the public
-network.
+A :term:`Ceph Metadata Server` or :term:`Ceph Manager` listens on the first 
+available port on the public network beginning at port 6800. Note that this 
+behavior is not deterministic, so if you are running more than one OSD or MDS
+on the same host, or if you restart the daemons within a short window of time,
+the daemons will bind to higher ports. You should open the entire 6800-7300
+range by default.  When you add the rule using the example below, make sure
+you replace ``{iface}`` with the public network interface (e.g., ``eth0``,
+``eth1``, etc.), ``{ip-address}`` with the IP address of the public network
+and ``{netmask}`` with the netmask of the public network.
 
 For example:: 
 
@@ -184,7 +184,7 @@ often ``192.168.0.0`` or ``10.0.0.0``.
 
 .. note:: Ceph uses `CIDR`_ notation for subnets (e.g., ``10.0.0.0/24``).
 
-When you've configured your networks, you may restart your cluster or restart
+When you have configured your networks, you may restart your cluster or restart
 each daemon. Ceph daemons bind dynamically, so you do not have to restart the
 entire cluster at once if you change your network configuration.
 
@@ -198,7 +198,7 @@ section of your Ceph configuration file.
 .. code-block:: ini
 
 	[global]
-		...
+		# ... elided configuration
 		public network = {public-network/netmask}
 
 
@@ -213,7 +213,7 @@ following option to the ``[global]`` section of your Ceph configuration file.
 .. code-block:: ini
 
 	[global]
-		...
+		# ... elided configuration
 		cluster network = {cluster-network/netmask}
 
 We prefer that the cluster network is **NOT** reachable from the public network
@@ -370,10 +370,24 @@ addresses.
 ``ms bind ipv6``
 
 :Description: Enables Ceph daemons to bind to IPv6 addresses. Currently the
-              messenger *either* uses IPv4 or IPv6, but it can't do both.
+              messenger *either* uses IPv4 or IPv6, but it cannot do both.
 :Type: Boolean
 :Default: ``false``
 :Required: No
+
+``public bind addr``
+
+:Description: In some dynamic deployments the Ceph MON daemon might bind
+              to an IP address locally that is different from the ``public addr``
+              advertised to other peers in the network. The environment must ensure
+              that routing rules are set correclty. If ``public bind addr`` is set
+              the Ceph MON daemon will bind to it locally and use ``public addr``
+              in the monmaps to advertise its address to peers. This behavior is limited
+              to the MON daemon.
+
+:Type: IP Address
+:Required: No
+:Default: N/A
 
 
 
@@ -383,7 +397,9 @@ Hosts
 Ceph expects at least one monitor declared in the Ceph configuration file, with
 a ``mon addr`` setting under each declared monitor. Ceph expects a ``host``
 setting under each declared monitor, metadata server and OSD in the Ceph
-configuration file.
+configuration file. Optionally, a monitor can be assigned with a priority, and
+the clients will always connect to the monitor with lower value of priority if
+specified.
 
 
 ``mon addr``
@@ -396,6 +412,15 @@ configuration file.
 :Required: No
 :Default: N/A
 
+``mon priority``
+
+:Description: The priority of the declared monitor, the lower value the more
+              prefered when a client selects a monitor when trying to connect
+              to the cluster.
+
+:Type: Unsigned 16-bit Integer
+:Required: No
+:Default: 0
 
 ``host``
 
@@ -465,5 +490,5 @@ Ceph disables TCP buffering by default.
 .. _hardware recommendations: ../../../start/hardware-recommendations
 .. _Monitor / OSD Interaction: ../mon-osd-interaction
 .. _Message Signatures: ../auth-config-ref#signatures
-.. _CIDR: http://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing
-.. _Nagle's Algorithm: http://en.wikipedia.org/wiki/Nagle's_algorithm
+.. _CIDR: https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing
+.. _Nagle's Algorithm: https://en.wikipedia.org/wiki/Nagle's_algorithm

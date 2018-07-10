@@ -198,32 +198,13 @@ int FileJournal::_open_file(int64_t oldsize, blksize_t blksize,
 	   << newsize << " bytes: " << cpp_strerror(err) << dendl;
       return -err;
     }
-#ifdef HAVE_POSIX_FALLOCATE
-    ret = ::posix_fallocate(fd, 0, newsize);
+    ret = ceph_posix_fallocate(fd, 0, newsize);
     if (ret) {
       derr << "FileJournal::_open_file : unable to preallocation journal to "
 	   << newsize << " bytes: " << cpp_strerror(ret) << dendl;
       return -ret;
     }
     max_size = newsize;
-#elif defined(__APPLE__)
-    fstore_t store;
-    store.fst_flags = F_ALLOCATECONTIG;
-    store.fst_posmode = F_PEOFPOSMODE;
-    store.fst_offset = 0;
-    store.fst_length = newsize;
-
-    ret = ::fcntl(fd, F_PREALLOCATE, &store);
-    if (ret == -1) {
-      ret = -errno;
-      derr << "FileJournal::_open_file : unable to preallocation journal to "
-	   << newsize << " bytes: " << cpp_strerror(ret) << dendl;
-      return ret;
-    }
-    max_size = newsize;
-#else
-# error "Journal pre-allocation not supported on platform."
-#endif
   }
   else {
     max_size = oldsize;
@@ -351,7 +332,7 @@ int FileJournal::create()
     goto free_buf;
   }
 
-  needed_space = ((int64_t)cct->_conf->osd_max_write_size) << 20;
+  needed_space = cct->_conf->osd_max_write_size << 20;
   needed_space += (2 * sizeof(entry_header_t)) + get_top();
   if (header.max_size - header.start < needed_space) {
     derr << "FileJournal::create: OSD journal is not large enough to hold "
@@ -398,6 +379,7 @@ int FileJournal::open(uint64_t fs_op_seq)
   dout(2) << "open " << fn << " fsid " << fsid << " fs_op_seq " << fs_op_seq << dendl;
 
   uint64_t next_seq = fs_op_seq + 1;
+  uint64_t seq = -1;
 
   int err = _open(false);
   if (err)
@@ -410,7 +392,7 @@ int FileJournal::open(uint64_t fs_op_seq)
   // read header?
   err = read_header(&header);
   if (err < 0)
-    return err;
+    goto out;
 
   // static zeroed buffer for alignment padding
   delete [] zero_buf;
@@ -423,32 +405,38 @@ int FileJournal::open(uint64_t fs_op_seq)
   if (header.fsid != fsid) {
     derr << "FileJournal::open: ondisk fsid " << header.fsid << " doesn't match expected " << fsid
          << ", invalid (someone else's?) journal" << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
   if (header.max_size > max_size) {
     dout(2) << "open journal size " << header.max_size << " > current " << max_size << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
   if (header.block_size != block_size) {
     dout(2) << "open journal block size " << header.block_size << " != current " << block_size << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
   if (header.max_size % header.block_size) {
     dout(2) << "open journal max size " << header.max_size
 	    << " not a multiple of block size " << header.block_size << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
   if (header.alignment != block_size && directio) {
     dout(0) << "open journal alignment " << header.alignment << " does not match block size "
 	    << block_size << " (required for direct_io journal mode)" << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
   if ((header.alignment % CEPH_DIRECTIO_ALIGNMENT) && directio) {
     dout(0) << "open journal alignment " << header.alignment
 	    << " is not multiple of minimum directio alignment "
 	    << CEPH_DIRECTIO_ALIGNMENT << " (required for direct_io journal mode)"
 	    << dendl;
-    return -EINVAL;
+    err = -EINVAL;
+    goto out;
   }
 
   // looks like a valid header.
@@ -458,16 +446,7 @@ int FileJournal::open(uint64_t fs_op_seq)
 
   // find next entry
   read_pos = header.start;
-  uint64_t seq = header.start_seq;
-
-  // last_committed_seq is 1 before the start of the journal or
-  // 0 if the start is 0
-  last_committed_seq = seq > 0 ? seq - 1 : seq;
-  if (last_committed_seq < fs_op_seq) {
-    dout(2) << "open advancing committed_seq " << last_committed_seq
-	    << " to fs op_seq " << fs_op_seq << dendl;
-    last_committed_seq = fs_op_seq;
-  }
+  seq = header.start_seq;
 
   while (1) {
     bufferlist bl;
@@ -493,6 +472,9 @@ int FileJournal::open(uint64_t fs_op_seq)
   }
 
   return 0;
+out:
+  close();
+  return err;
 }
 
 void FileJournal::_close(int fd) const
@@ -604,7 +586,7 @@ int FileJournal::_fdump(Formatter &f, bool simple)
       f.dump_unsigned("bl.length", bl.length());
     } else {
       f.open_array_section("transactions");
-      bufferlist::iterator p = bl.begin();
+      auto p = bl.cbegin();
       int trans_num = 0;
       while (!p.end()) {
         ObjectStore::Transaction t(p);
@@ -711,8 +693,8 @@ int FileJournal::read_header(header_t *hdr) const
   bl.push_back(std::move(bp));
 
   try {
-    bufferlist::iterator p = bl.begin();
-    ::decode(*hdr, p);
+    auto p = bl.cbegin();
+    decode(*hdr, p);
   }
   catch (buffer::error& e) {
     derr << "read_header error decoding journal header" << dendl;
@@ -744,7 +726,7 @@ bufferptr FileJournal::prepare_header()
     Mutex::Locker l(finisher_lock);
     header.committed_up_to = journaled_seq;
   }
-  ::encode(header, bl);
+  encode(header, bl);
   bufferptr bp = buffer::create_page_aligned(get_top());
   // don't use bp.zero() here, because it also invalidates
   // crc cache (which is not yet populated anyway)
@@ -835,6 +817,8 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
 	  assert(aio_write_queue_bytes >= bytes);
 	  aio_write_queue_bytes -= bytes;
 	}
+#else
+	(void)bytes;
 #endif
       }
       if (r == -ENOSPC) {
@@ -859,7 +843,7 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
           }
           print_header(header);
         }
-        
+
         return -ENOSPC;  // hrm, full on first op
       }
       if (eleft) {
@@ -929,8 +913,11 @@ void FileJournal::queue_completions_thru(uint64_t seq)
     }
     if (next.finish)
       finisher->queue(next.finish);
-    if (next.tracked_op)
+    if (next.tracked_op) {
       next.tracked_op->mark_event("journaled_completion_queued");
+      next.tracked_op->journal_trace.event("queued completion");
+      next.tracked_op->journal_trace.keyval("completed through", seq);
+    }
     items.erase(it++);
   }
   batch_unpop_completions(items);
@@ -975,8 +962,10 @@ int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, of
   footerptr.copy_in(post_offset + magic2_offset, sizeof(uint64_t), (char *)&magic2);
 
   bl.claim_append(ebl);
-  if (next_write.tracked_op)
+  if (next_write.tracked_op) {
     next_write.tracked_op->mark_event("write_thread_in_journal_buffer");
+    next_write.tracked_op->journal_trace.event("prepare_single_write");
+  }
 
   journalq.push_back(pair<uint64_t,off64_t>(seq, queue_pos));
   writing_seq = seq;
@@ -1071,7 +1060,10 @@ void FileJournal::do_write(bufferlist& bl)
     // header too?
     if (hbp.length()) {
       // be sneaky: include the header in the second fragment
-      second.push_front(hbp);
+      bufferlist tmp;
+      tmp.push_back(hbp);
+      tmp.claim_append(second);
+      second.swap(tmp);
       pos = 0;          // we included the header
     }
     // Write the second portion first possible with the header, so
@@ -1131,7 +1123,7 @@ void FileJournal::do_write(bufferlist& bl)
      * flush disk caches or commits any sort of metadata.
      */
     int ret = 0;
-#if defined(DARWIN) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__)
     ret = ::fsync(fd);
 #else
     ret = ::fdatasync(fd);
@@ -1220,7 +1212,7 @@ void FileJournal::write_thread_entry()
       // flight if we hit this limit to ensure we keep the device
       // saturated.
       while (aio_num > 0) {
-	int exp = MIN(aio_num * 2, 24);
+	int exp = std::min<int>(aio_num * 2, 24);
 	long unsigned min_new = 1ull << exp;
 	uint64_t cur = aio_write_queue_bytes;
 	dout(20) << "write_thread_entry aio throttle: aio num " << aio_num << " bytes " << aio_bytes
@@ -1327,7 +1319,10 @@ void FileJournal::do_aio_write(bufferlist& bl)
     assert(pos == header.max_size);
     if (hbp.length()) {
       // be sneaky: include the header in the second fragment
-      second.push_front(hbp);
+      bufferlist tmp;
+      tmp.push_back(hbp);
+      tmp.claim_append(second);
+      second.swap(tmp);
       pos = 0;          // we included the header
     } else
       pos = get_top();  // no header, start after that
@@ -1372,7 +1367,7 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
   dout(20) << "write_aio_bl " << pos << "~" << bl.length() << " seq " << seq << dendl;
 
   while (bl.length() > 0) {
-    int max = MIN(bl.get_num_buffers(), IOV_MAX-1);
+    int max = std::min<int>(bl.get_num_buffers(), IOV_MAX-1);
     iovec *iov = new iovec[max];
     int n = 0;
     unsigned len = 0;
@@ -1410,7 +1405,10 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
     aio_lock.Unlock();
 
     iocb *piocb = &aio.iocb;
-    int attempts = 10;
+
+    // 2^16 * 125us = ~8 seconds, so max sleep is ~16 seconds
+    int attempts = 16;
+    int delay = 125;
     do {
       int r = io_submit(aio_ctx, 1, &piocb);
       dout(20) << "write_aio_bl io_submit return value: " << r << dendl;
@@ -1418,7 +1416,8 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 	derr << "io_submit to " << aio.off << "~" << cur_len
 	     << " got " << cpp_strerror(r) << dendl;
 	if (r == -EAGAIN && attempts-- > 0) {
-	  usleep(500);
+	  usleep(delay);
+	  delay *= 2;
 	  continue;
 	}
 	check_align(pos, tbl);
@@ -1439,20 +1438,20 @@ int FileJournal::write_aio_bl(off64_t& pos, bufferlist& bl, uint64_t seq)
 void FileJournal::write_finish_thread_entry()
 {
 #ifdef HAVE_LIBAIO
-  dout(10) << "write_finish_thread_entry enter" << dendl;
+  dout(10) << __func__ << " enter" << dendl;
   while (true) {
     {
       Mutex::Locker locker(aio_lock);
       if (aio_queue.empty()) {
 	if (aio_stop)
 	  break;
-	dout(20) << "write_finish_thread_entry sleeping" << dendl;
+	dout(20) << __func__ << " sleeping" << dendl;
 	write_finish_cond.Wait(aio_lock);
 	continue;
       }
     }
 
-    dout(20) << "write_finish_thread_entry waiting for aio(s)" << dendl;
+    dout(20) << __func__ << " waiting for aio(s)" << dendl;
     io_event event[16];
     int r = io_getevents(aio_ctx, 1, 16, event, NULL);
     if (r < 0) {
@@ -1473,14 +1472,14 @@ void FileJournal::write_finish_thread_entry()
 	       << " returned: " << (int)event[i].res << dendl;
 	  assert(0 == "unexpected aio error");
 	}
-	dout(10) << "write_finish_thread_entry aio " << ai->off
+	dout(10) << __func__ << " aio " << ai->off
 		 << "~" << ai->len << " done" << dendl;
 	ai->done = true;
       }
       check_aio_completion();
     }
   }
-  dout(10) << "write_finish_thread_entry exit" << dendl;
+  dout(10) << __func__ << " exit" << dendl;
 #endif
 }
 
@@ -1546,7 +1545,7 @@ int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist
      data_len = (*p).get_data_length();
      data_align = ((*p).get_data_alignment() - bl.length()) & ~CEPH_PAGE_MASK;
     }
-    ::encode(*p, bl);
+    encode(*p, bl);
   }
   if (tbl->length()) {
     bl.claim_append(*tbl);
@@ -1558,7 +1557,7 @@ int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist
   memset(&h, 0, sizeof(h));
   if (data_align >= 0)
     h.pre_pad = ((unsigned int)data_align - (unsigned int)head_size) & ~CEPH_PAGE_MASK;
-  off64_t size = ROUND_UP_TO(base_size + h.pre_pad, header.alignment);
+  off64_t size = round_up_to(base_size + h.pre_pad, header.alignment);
   unsigned post_pad = size - base_size - h.pre_pad;
   h.len = bl.length();
   h.post_pad = post_pad;
@@ -1597,8 +1596,6 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
   assert(e.length() > 0);
   assert(e.length() < header.max_size);
 
-  if (osd_op)
-    osd_op->mark_event("commit_queued_for_journal_write");
   if (logger) {
     logger->inc(l_filestore_journal_queue_bytes, orig_len);
     logger->inc(l_filestore_journal_queue_ops, 1);
@@ -1610,6 +1607,14 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
     logger->inc(l_filestore_journal_bytes, e.length());
   }
 
+  if (osd_op) {
+    osd_op->mark_event("commit_queued_for_journal_write");
+    if (osd_op->store_trace) {
+      osd_op->journal_trace.init("journal", &trace_endpoint, &osd_op->store_trace);
+      osd_op->journal_trace.event("submit_entry");
+      osd_op->journal_trace.keyval("seq", seq);
+    }
+  }
   {
     Mutex::Locker l1(writeq_lock);
 #ifdef HAVE_LIBAIO
@@ -1629,6 +1634,8 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
     if (writeq.empty())
       writeq_cond.Signal();
     writeq.push_back(write_item(seq, e, orig_len, osd_op));
+    if (osd_op)
+      osd_op->journal_trace.keyval("queue depth", writeq.size());
   }
 }
 
@@ -1721,16 +1728,16 @@ void FileJournal::commit_start(uint64_t seq)
  */
 void FileJournal::do_discard(int64_t offset, int64_t end)
 {
-  dout(10) << __func__ << "trim(" << offset << ", " << end << dendl;
+  dout(10) << __func__ << " trim(" << offset << ", " << end << dendl;
 
-  offset = ROUND_UP_TO(offset, block_size);
+  offset = round_up_to(offset, block_size);
   if (offset >= end)
     return;
-  end = ROUND_UP_TO(end - block_size, block_size);
+  end = round_up_to(end - block_size, block_size);
   assert(end >= offset);
   if (offset < end)
     if (block_device_discard(fd, offset, end - offset) < 0)
-	dout(1) << __func__ << "ioctl(BLKDISCARD) error:" << cpp_strerror(errno) << dendl;
+	dout(1) << __func__ << " ioctl(BLKDISCARD) error:" << cpp_strerror(errno) << dendl;
 }
 
 void FileJournal::committed_thru(uint64_t seq)
@@ -1951,6 +1958,8 @@ bool FileJournal::read_entry(
         journaled_seq = seq;
       return true;
     }
+  } else {
+    derr << "do_read_entry(" << pos << "): " << ss.str() << dendl;
   }
 
   if (seq && seq < header.committed_up_to) {
@@ -1966,7 +1975,6 @@ bool FileJournal::read_entry(
     }
   }
 
-  dout(25) << ss.str() << dendl;
   dout(2) << "No further valid entries found, journal is most likely valid"
 	  << dendl;
   return false;

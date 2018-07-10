@@ -8,6 +8,7 @@
 #include "librbd/internal.h"
 #include "librbd/Operations.h"
 #include "librbd/TaskFinisher.h"
+#include "librbd/Types.h"
 #include "librbd/Utils.h"
 #include "librbd/exclusive_lock/Policy.h"
 #include "librbd/image_watcher/NotifyLockOwner.h"
@@ -31,7 +32,36 @@ using util::create_context_callback;
 using util::create_rados_callback;
 using librbd::watcher::util::HandlePayloadVisitor;
 
+using ceph::encode;
+using ceph::decode;
+
 static const double	RETRY_DELAY_SECONDS = 1.0;
+
+template <typename I>
+struct ImageWatcher<I>::C_ProcessPayload : public Context {
+  ImageWatcher *image_watcher;
+  uint64_t notify_id;
+  uint64_t handle;
+  watch_notify::Payload payload;
+
+  C_ProcessPayload(ImageWatcher *image_watcher_, uint64_t notify_id_,
+                   uint64_t handle_, const watch_notify::Payload &payload)
+    : image_watcher(image_watcher_), notify_id(notify_id_), handle(handle_),
+      payload(payload) {
+  }
+
+  void finish(int r) override {
+    image_watcher->m_async_op_tracker.start_op();
+    if (image_watcher->notifications_blocked()) {
+      // requests are blocked -- just ack the notification
+      bufferlist bl;
+      image_watcher->acknowledge_notify(notify_id, handle, bl);
+    } else {
+      image_watcher->process_payload(notify_id, handle, payload);
+    }
+    image_watcher->m_async_op_tracker.finish_op();
+  }
+};
 
 template <typename I>
 ImageWatcher<I>::ImageWatcher(I &image_ctx)
@@ -60,6 +90,18 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
     m_task_finisher->cancel_all(on_finish);
   });
   Watcher::unregister_watch(ctx);
+}
+
+template <typename I>
+void ImageWatcher<I>::block_notifies(Context *on_finish) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 10) << this << " "  << __func__ << dendl;
+
+  on_finish = new FunctionContext([this, on_finish](int r) {
+      cancel_async_requests();
+      on_finish->complete(r);
+    });
+  Watcher::block_notifies(on_finish);
 }
 
 template <typename I>
@@ -252,7 +294,7 @@ void ImageWatcher<I>::notify_header_update(librados::IoCtx &io_ctx,
 				           const std::string &oid) {
   // supports legacy (empty buffer) clients
   bufferlist bl;
-  ::encode(NotifyMessage(HeaderUpdatePayload()), bl);
+  encode(NotifyMessage(HeaderUpdatePayload()), bl);
   io_ctx.notify2(oid, bl, watcher::Notifier::NOTIFY_TIMEOUT, nullptr);
 }
 
@@ -325,7 +367,7 @@ void ImageWatcher<I>::schedule_request_lock(bool use_timer, int timer_delay) {
          !m_image_ctx.exclusive_lock->is_lock_owner());
 
   RWLock::RLocker watch_locker(this->m_watch_lock);
-  if (this->m_watch_state == Watcher::WATCH_STATE_REGISTERED) {
+  if (this->is_registered(this->m_watch_lock)) {
     ldout(m_image_ctx.cct, 15) << this << " requesting exclusive lock" << dendl;
 
     FunctionContext *ctx = new FunctionContext(
@@ -387,7 +429,8 @@ void ImageWatcher<I>::handle_request_lock(int r) {
     schedule_request_lock(true);
   } else {
     // lock owner acked -- but resend if we don't see them release the lock
-    int retry_timeout = m_image_ctx.cct->_conf->client_notify_timeout;
+    int retry_timeout = m_image_ctx.cct->_conf->template get_val<int64_t>(
+      "client_notify_timeout");
     ldout(m_image_ctx.cct, 15) << this << " will retry in " << retry_timeout
                                << " seconds" << dendl;
     schedule_request_lock(true, retry_timeout);
@@ -401,7 +444,7 @@ void ImageWatcher<I>::notify_lock_owner(const Payload& payload,
   assert(m_image_ctx.owner_lock.is_locked());
 
   bufferlist bl;
-  ::encode(NotifyMessage(payload), bl);
+  encode(NotifyMessage(payload), bl);
 
   NotifyLockOwner *notify_lock_owner = NotifyLockOwner::create(
     m_image_ctx, this->m_notifier, std::move(bl), on_finish);
@@ -603,7 +646,7 @@ bool ImageWatcher<I>::handle_payload(const RequestLockPayload &payload,
       r = m_image_ctx.get_exclusive_lock_policy()->lock_requested(
         payload.force);
     }
-    ::encode(ResponseMessage(r), ack_ctx->out);
+    encode(ResponseMessage(r), ack_ctx->out);
   }
   return true;
 }
@@ -657,9 +700,9 @@ bool ImageWatcher<I>::handle_payload(const FlattenPayload &payload,
         m_image_ctx.operations->execute_flatten(*prog_ctx, ctx);
       }
 
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -685,9 +728,9 @@ bool ImageWatcher<I>::handle_payload(const ResizePayload &payload,
         m_image_ctx.operations->execute_resize(payload.size, payload.allow_shrink, *prog_ctx, ctx, 0);
       }
 
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -709,7 +752,7 @@ bool ImageWatcher<I>::handle_payload(const SnapCreatePayload &payload,
                                                   0, false);
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -731,7 +774,7 @@ bool ImageWatcher<I>::handle_payload(const SnapRenamePayload &payload,
                                                   new C_ResponseMessage(ack_ctx));
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -752,7 +795,7 @@ bool ImageWatcher<I>::handle_payload(const SnapRemovePayload &payload,
                                                   new C_ResponseMessage(ack_ctx));
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -773,7 +816,7 @@ bool ImageWatcher<I>::handle_payload(const SnapProtectPayload& payload,
                                                    new C_ResponseMessage(ack_ctx));
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -794,7 +837,7 @@ bool ImageWatcher<I>::handle_payload(const SnapUnprotectPayload& payload,
                                                      new C_ResponseMessage(ack_ctx));
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -819,9 +862,9 @@ bool ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload& payload,
         m_image_ctx.operations->execute_rebuild_object_map(*prog_ctx, ctx);
       }
 
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -841,7 +884,7 @@ bool ImageWatcher<I>::handle_payload(const RenamePayload& payload,
                                              new C_ResponseMessage(ack_ctx));
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -863,7 +906,7 @@ bool ImageWatcher<I>::handle_payload(const UpdateFeaturesPayload& payload,
         payload.features, payload.enabled, new C_ResponseMessage(ack_ctx), 0);
       return false;
     } else if (r < 0) {
-      ::encode(ResponseMessage(r), ack_ctx->out);
+      encode(ResponseMessage(r), ack_ctx->out);
     }
   }
   return true;
@@ -876,7 +919,7 @@ bool ImageWatcher<I>::handle_payload(const UnknownPayload &payload,
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
     if (m_image_ctx.exclusive_lock->accept_requests(&r) || r < 0) {
-      ::encode(ResponseMessage(-EOPNOTSUPP), ack_ctx->out);
+      encode(ResponseMessage(-EOPNOTSUPP), ack_ctx->out);
     }
   }
   return true;
@@ -884,15 +927,9 @@ bool ImageWatcher<I>::handle_payload(const UnknownPayload &payload,
 
 template <typename I>
 void ImageWatcher<I>::process_payload(uint64_t notify_id, uint64_t handle,
-                                      const Payload &payload, int r) {
-  if (r < 0) {
-    bufferlist out_bl;
-    this->acknowledge_notify(notify_id, handle, out_bl);
-  } else {
-    apply_visitor(HandlePayloadVisitor<ImageWatcher<I>>(this, notify_id,
-                                                       handle),
-                  payload);
-  }
+                                      const Payload &payload) {
+  apply_visitor(HandlePayloadVisitor<ImageWatcher<I>>(this, notify_id, handle),
+                payload);
 }
 
 template <typename I>
@@ -904,8 +941,8 @@ void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
     notify_message = NotifyMessage(HeaderUpdatePayload());
   } else {
     try {
-      bufferlist::iterator iter = bl.begin();
-      ::decode(notify_message, iter);
+      auto iter = bl.cbegin();
+      decode(notify_message, iter);
     } catch (const buffer::error &err) {
       lderr(m_image_ctx.cct) << this << " error decoding image notification: "
 			     << err.what() << dendl;
@@ -919,7 +956,7 @@ void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
     m_image_ctx.state->refresh(new C_ProcessPayload(this, notify_id, handle,
                                                     notify_message.payload));
   } else {
-    process_payload(notify_id, handle, notify_message.payload, 0);
+    process_payload(notify_id, handle, notify_message.payload);
   }
 }
 
@@ -957,7 +994,7 @@ template <typename I>
 void ImageWatcher<I>::send_notify(const Payload &payload, Context *ctx) {
   bufferlist bl;
 
-  ::encode(NotifyMessage(payload), bl);
+  encode(NotifyMessage(payload), bl);
   Watcher::send_notify(bl, nullptr, ctx);
 }
 
@@ -971,7 +1008,7 @@ void ImageWatcher<I>::C_ResponseMessage::finish(int r) {
   CephContext *cct = notify_ack->cct;
   ldout(cct, 10) << this << " C_ResponseMessage: r=" << r << dendl;
 
-  ::encode(ResponseMessage(r), notify_ack->out);
+  encode(ResponseMessage(r), notify_ack->out);
   notify_ack->complete(0);
 }
 

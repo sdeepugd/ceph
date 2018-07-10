@@ -17,11 +17,11 @@
 
 #include <map>
 #include <set>
-using namespace std;
 
 #include "include/types.h"
 #include "PaxosService.h"
 
+#include "common/config_fwd.h"
 #include "common/LogEntry.h"
 #include "include/str_map.h"
 
@@ -136,7 +136,7 @@ private:
   // propose pending update to peers
   void encode_pending(MonitorDBStore::TransactionRef t) override;
   void encode_full(MonitorDBStore::TransactionRef t) override;
-  version_t get_trim_to() override;
+  version_t get_trim_to() const override;
   bool preprocess_query(MonOpRequestRef op) override;  // true if processed.
   bool prepare_update(MonOpRequestRef op) override;
 
@@ -156,7 +156,6 @@ private:
   bool preprocess_command(MonOpRequestRef op);
   bool prepare_command(MonOpRequestRef op);
 
-  bool _create_sub_summary(MLog *mlog, int level);
   void _create_sub_incremental(MLog *mlog, int level, version_t sv);
 
  public:
@@ -200,7 +199,7 @@ private:
     };
     return KEYS;
   }
-  void handle_conf_change(const struct md_config_t *conf,
+  void handle_conf_change(const md_config_t *conf,
                           const std::set<std::string> &changed) override;
 };
 #endif

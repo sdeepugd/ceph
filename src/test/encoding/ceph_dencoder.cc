@@ -109,10 +109,11 @@ public:
   }
 
   string decode(bufferlist bl, uint64_t seek) override {
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     p.seek(seek);
     try {
-      ::decode(*m_object, p);
+      using ceph::decode;
+      decode(*m_object, p);
     }
     catch (buffer::error& e) {
       return e.what();
@@ -142,9 +143,7 @@ public:
       i = m_list.size();
     if ((i == 0) || (i > m_list.size()))
       return "invalid id for generated object";
-    typename list<T*>::iterator p = m_list.begin();
-    for (i--; i > 0 && p != m_list.end(); ++p, --i) ;
-    m_object = *p;
+    m_object = *(std::next(m_list.begin(), i-1));
     return string();
   }
 
@@ -160,7 +159,8 @@ public:
     : DencoderBase<T>(stray_ok, nondeterministic) {}
   void encode(bufferlist& out, uint64_t features) override {
     out.clear();
-    ::encode(*this->m_object, out);
+    using ceph::encode;
+    encode(*this->m_object, out);
   }
 };
 
@@ -189,7 +189,8 @@ public:
     : DencoderBase<T>(stray_ok, nondeterministic) {}
   void encode(bufferlist& out, uint64_t features) override {
     out.clear();
-    ::encode(*(this->m_object), out, features);
+    using ceph::encode;
+    encode(*(this->m_object), out, features);
   }
 };
 
@@ -225,7 +226,7 @@ public:
   }
 
   string decode(bufferlist bl, uint64_t seek) override {
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     p.seek(seek);
     try {
       Message *n = decode_message(g_ceph_context, 0, p);
@@ -270,10 +271,8 @@ public:
       i = m_list.size();
     if ((i == 0) || (i > m_list.size()))
       return "invalid id for generated object";
-    typename list<T*>::iterator p = m_list.begin();
-    for (i--; i > 0 && p != m_list.end(); ++p, --i) ;
     m_object->put();
-    m_object = *p;
+    m_object = *(std::next(m_list.begin(), i-1));
     return string();
   }
   bool is_deterministic() override {

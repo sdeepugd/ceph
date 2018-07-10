@@ -15,10 +15,10 @@
 #ifndef CEPH_RGW_QUOTA_H
 #define CEPH_RGW_QUOTA_H
 
-
 #include "include/utime.h"
-#include "include/atomic.h"
 #include "common/lru_map.h"
+
+#include <atomic>
 
 static inline int64_t rgw_rounded_kb(int64_t bytes)
 {
@@ -58,29 +58,29 @@ public:
   void encode(bufferlist& bl) const {
     ENCODE_START(3, 1, bl);
     if (max_size < 0) {
-      ::encode(-rgw_rounded_kb(abs(max_size)), bl);
+      encode(-rgw_rounded_kb(abs(max_size)), bl);
     } else {
-      ::encode(rgw_rounded_kb(max_size), bl);
+      encode(rgw_rounded_kb(max_size), bl);
     }
-    ::encode(max_objects, bl);
-    ::encode(enabled, bl);
-    ::encode(max_size, bl);
-    ::encode(check_on_raw, bl);
+    encode(max_objects, bl);
+    encode(enabled, bl);
+    encode(max_size, bl);
+    encode(check_on_raw, bl);
     ENCODE_FINISH(bl);
   }
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START_LEGACY_COMPAT_LEN(3, 1, 1, bl);
     int64_t max_size_kb;
-    ::decode(max_size_kb, bl);
-    ::decode(max_objects, bl);
-    ::decode(enabled, bl);
+    decode(max_size_kb, bl);
+    decode(max_objects, bl);
+    decode(enabled, bl);
     if (struct_v < 2) {
       max_size = max_size_kb * 1024;
     } else {
-      ::decode(max_size, bl);
+      decode(max_size, bl);
     }
     if (struct_v >= 3) {
-      ::decode(check_on_raw, bl);
+      decode(check_on_raw, bl);
     }
     DECODE_FINISH(bl);
   }
@@ -102,6 +102,11 @@ public:
   virtual int check_quota(const rgw_user& bucket_owner, rgw_bucket& bucket,
                           RGWQuotaInfo& user_quota, RGWQuotaInfo& bucket_quota,
 			  uint64_t num_objs, uint64_t size) = 0;
+
+  virtual int check_bucket_shards(uint64_t max_objs_per_shard, uint64_t num_shards,
+				  const rgw_user& bucket_owner, const rgw_bucket& bucket,
+				  RGWQuotaInfo& bucket_quota, uint64_t num_objs, bool& need_resharding,
+                                  uint32_t *suggested_num_shards) = 0;
 
   virtual void update_stats(const rgw_user& bucket_owner, rgw_bucket& bucket, int obj_delta, uint64_t added_bytes, uint64_t removed_bytes) = 0;
 

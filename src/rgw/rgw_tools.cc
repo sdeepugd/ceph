@@ -18,7 +18,7 @@
 
 static std::map<std::string, std::string>* ext_mime_map;
 
-int rgw_put_system_obj(RGWRados *rgwstore, const rgw_pool& pool, const string& oid, const char *data, size_t size, bool exclusive,
+int rgw_put_system_obj(RGWRados *rgwstore, const rgw_pool& pool, const string& oid, const bufferlist& data, bool exclusive,
                        RGWObjVersionTracker *objv_tracker, real_time set_mtime, map<string, bufferlist> *pattrs)
 {
   map<string,bufferlist> no_attrs;
@@ -27,12 +27,12 @@ int rgw_put_system_obj(RGWRados *rgwstore, const rgw_pool& pool, const string& o
 
   rgw_raw_obj obj(pool, oid);
 
-  int ret = rgwstore->put_system_obj(NULL, obj, data, size, exclusive, NULL, *pattrs, objv_tracker, set_mtime);
+  int ret = rgwstore->put_system_obj(NULL, obj, data, exclusive, NULL, *pattrs, objv_tracker, set_mtime);
 
   if (ret == -ENOENT) {
     ret = rgwstore->create_pool(pool);
     if (ret >= 0)
-      ret = rgwstore->put_system_obj(NULL, obj, data, size, exclusive, NULL, *pattrs, objv_tracker, set_mtime);
+      ret = rgwstore->put_system_obj(NULL, obj, data, exclusive, NULL, *pattrs, objv_tracker, set_mtime);
   }
 
   return ret;
@@ -40,9 +40,8 @@ int rgw_put_system_obj(RGWRados *rgwstore, const rgw_pool& pool, const string& o
 
 int rgw_get_system_obj(RGWRados *rgwstore, RGWObjectCtx& obj_ctx, const rgw_pool& pool, const string& key, bufferlist& bl,
                        RGWObjVersionTracker *objv_tracker, real_time *pmtime, map<string, bufferlist> *pattrs,
-                       rgw_cache_entry_info *cache_info)
+                       rgw_cache_entry_info *cache_info, boost::optional<obj_version> refresh_version)
 {
-  struct rgw_err err;
   bufferlist::iterator iter;
   int request_len = READ_CHUNK_LEN;
   rgw_raw_obj obj(pool, key);
@@ -58,7 +57,6 @@ int rgw_get_system_obj(RGWRados *rgwstore, RGWObjectCtx& obj_ctx, const rgw_pool
 
     rop.stat_params.attrs = pattrs;
     rop.stat_params.lastmod = pmtime;
-    rop.stat_params.perr = &err;
 
     int ret = rop.stat(objv_tracker);
     if (ret < 0)
@@ -66,7 +64,7 @@ int rgw_get_system_obj(RGWRados *rgwstore, RGWObjectCtx& obj_ctx, const rgw_pool
 
     rop.read_params.cache_info = cache_info;
 
-    ret = rop.read(0, request_len - 1, bl, objv_tracker);
+    ret = rop.read(0, request_len - 1, bl, objv_tracker, refresh_version);
     if (ret == -ECANCELED) {
       /* raced, restart */
       if (!original_readv.empty()) {

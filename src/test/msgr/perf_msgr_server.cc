@@ -22,7 +22,6 @@
 
 using namespace std;
 
-#include "include/atomic.h"
 #include "common/ceph_argparse.h"
 #include "common/debug.h"
 #include "global/global_init.h"
@@ -101,7 +100,8 @@ class ServerDispatcher : public Dispatcher {
   }
   bool ms_verify_authorizer(Connection *con, int peer_type, int protocol,
                             bufferlist& authorizer, bufferlist& authorizer_reply,
-                            bool& isvalid, CryptoKey& session_key) override {
+                            bool& isvalid, CryptoKey& session_key,
+			    std::unique_ptr<AuthAuthorizerChallenge> *challenge) override {
     isvalid = true;
     return true;
   }
@@ -114,7 +114,7 @@ class MessengerServer {
   ServerDispatcher dispatcher;
 
  public:
-  MessengerServer(string t, string addr, int threads, int delay):
+  MessengerServer(const string &t, const string &addr, int threads, int delay):
       msgr(NULL), type(t), bindaddr(addr), dispatcher(threads, delay) {
     msgr = Messenger::create(g_ceph_context, type, entity_name_t::OSD(0), "server", 0, 0);
     msgr->set_default_policy(Messenger::Policy::stateless_server(0));
@@ -146,7 +146,8 @@ int main(int argc, char **argv)
   argv_to_vec(argc, (const char **)argv, args);
 
   auto cct = global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT,
-			 CODE_ENVIRONMENT_UTILITY, 0);
+			 CODE_ENVIRONMENT_UTILITY,
+			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
   common_init_finish(g_ceph_context);
   g_ceph_context->_conf->apply_changes(NULL);
 

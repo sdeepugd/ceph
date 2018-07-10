@@ -4,17 +4,19 @@
 #ifndef CEPH_TEST_RADOS_CLIENT_H
 #define CEPH_TEST_RADOS_CLIENT_H
 
-#include "include/rados/librados.hpp"
-#include "common/config.h"
-#include "include/atomic.h"
-#include "include/buffer_fwd.h"
-#include "test/librados_test_stub/TestWatchNotify.h"
-#include <boost/function.hpp>
-#include <boost/functional/hash.hpp>
-#include <list>
 #include <map>
+#include <list>
 #include <string>
 #include <vector>
+#include <atomic>
+
+#include <boost/function.hpp>
+#include <boost/functional/hash.hpp>
+
+#include "include/rados/librados.hpp"
+#include "common/config.h"
+#include "include/buffer_fwd.h"
+#include "test/librados_test_stub/TestWatchNotify.h"
 
 class Finisher;
 
@@ -40,15 +42,17 @@ public:
 
   class Transaction {
   public:
-    Transaction(TestRadosClient *rados_client, const std::string &oid)
-      : rados_client(rados_client), oid(oid) {
-      rados_client->transaction_start(oid);
+    Transaction(TestRadosClient *rados_client, const std::string& nspace,
+                const std::string &oid)
+      : rados_client(rados_client), nspace(nspace), oid(oid) {
+      rados_client->transaction_start(nspace, oid);
     }
     ~Transaction() {
-      rados_client->transaction_finish(oid);
+      rados_client->transaction_finish(nspace, oid);
     }
   private:
     TestRadosClient *rados_client;
+    std::string nspace;
     std::string oid;
   };
 
@@ -61,6 +65,9 @@ public:
 
   virtual uint32_t get_nonce() = 0;
   virtual uint64_t get_instance_id() = 0;
+
+  virtual int get_min_compatible_client(int8_t* min_compat_client,
+                                        int8_t* require_min_compat_client) = 0;
 
   virtual int connect();
   virtual void shutdown();
@@ -75,6 +82,11 @@ public:
 
   virtual void object_list(int64_t pool_id,
 			   std::list<librados::TestRadosClient::Object> *list) = 0;
+
+  virtual int service_daemon_register(const std::string& service,
+                                      const std::string& name,
+                                      const std::map<std::string,std::string>& metadata) = 0;
+  virtual int service_daemon_update_status(std::map<std::string,std::string>&& status) = 0;
 
   virtual int pool_create(const std::string &pool_name) = 0;
   virtual int pool_delete(const std::string &pool_name) = 0;
@@ -107,13 +119,15 @@ public:
 protected:
   virtual ~TestRadosClient();
 
-  virtual void transaction_start(const std::string &oid) = 0;
-  virtual void transaction_finish(const std::string &oid) = 0;
+  virtual void transaction_start(const std::string& nspace,
+                                 const std::string &oid) = 0;
+  virtual void transaction_finish(const std::string& nspace,
+                                  const std::string &oid) = 0;
 
 private:
 
   CephContext *m_cct;
-  atomic_t m_refcount;
+  std::atomic<uint64_t> m_refcount = { 0 };
 
   TestWatchNotify *m_watch_notify;
 

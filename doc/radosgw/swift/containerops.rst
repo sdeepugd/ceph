@@ -147,6 +147,13 @@ Parameters
 :Type: String
 :Required: No
 
+``allow_unordered``
+
+:Description: Allows the results to be returned unordered to reduce computation overhead. Cannot be used with ``delimiter``.
+:Type: Boolean
+:Required: No
+:Non-Standard Extension: Yes
+
 
 Response Entities
 ~~~~~~~~~~~~~~~~~
@@ -257,7 +264,7 @@ Delete a Container
 To delete a container, make a ``DELETE`` request with the API version, account,
 and the name of the container. The container must be empty. If you'd like to check 
 if the container is empty, execute a ``HEAD`` request against the container. Once 
-you've successfully removed the container, you'll be able to reuse the container name.
+you have successfully removed the container, you will be able to reuse the container name.
 
 Syntax
 ~~~~~~

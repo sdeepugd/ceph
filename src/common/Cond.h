@@ -16,15 +16,7 @@
 #ifndef CEPH_COND_H
 #define CEPH_COND_H
 
-#include <time.h>
-#include <pthread.h>
-
 #include "include/Context.h"
-
-#include "common/ceph_time.h"
-#include "common/Mutex.h"
-#include "common/Clock.h"
-
 
 class Cond {
   // my bits
@@ -185,6 +177,7 @@ class C_SaferCond : public Context {
   int rval;      ///< return value
 public:
   C_SaferCond() : lock("C_SaferCond"), done(false), rval(0) {}
+  explicit C_SaferCond(const std::string &name) : lock(name), done(false), rval(0) {}
   void finish(int r) override { complete(r); }
 
   /// We overload complete in order to not delete the context
@@ -201,6 +194,15 @@ public:
     while (!done)
       cond.Wait(lock);
     return rval;
+  }
+
+  /// Wait until the \c secs expires or \c complete() is called
+  int wait_for(double secs) {
+    utime_t interval;
+    interval.set_from_double(secs);
+    Mutex::Locker l{lock};
+    cond.WaitInterval(lock, interval);
+    return done ? rval : ETIMEDOUT;
   }
 };
 

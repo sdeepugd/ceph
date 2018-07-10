@@ -43,14 +43,17 @@ extern string reverse_hexdigit_bits_string(string l);
  * ex: ghobject_t("object", CEPH_NO_SNAP, 0xA4CEE0D2)
  * would be located in (root)/2/D/0/
  *
- * Subdirectories are created when the number of objects in a directory
- * exceed (abs(merge_threshhold)) * 16 * split_multiplier.  The number of objects in a directory
- * is encoded as subdir_info_s in an xattr on the directory.
+ * Subdirectories are created when the number of objects in a
+ * directory exceed 16 * (abs(merge_threshhold) * split_multiplier +
+ * split_rand_factor). The number of objects in a directory is encoded
+ * as subdir_info_s in an xattr on the directory.
  */
 class HashIndex : public LFNIndex {
 private:
   /// Attribute name for storing subdir info @see subdir_info_s
   static const string SUBDIR_ATTR;
+  /// Attribute name for storing index-wide settings
+  static const string SETTINGS_ATTR;
   /// Attribute name for storing in progress op tag
   static const string IN_PROGRESS_OP_TAG;
   /// Size (bits) in object hash
@@ -61,8 +64,12 @@ private:
   /**
    * Merges occur when the number of object drops below
    * merge_threshold and splits occur when the number of objects
-   * exceeds 16 * abs(merge_threshold) * split_multiplier.
-   * Please note if merge_threshold is less than zero, it will never do merging
+   * exceeds:
+   *
+   *   16 * (abs(merge_threshold) * split_multiplier + split_rand_factor)
+   *
+   * Please note if merge_threshold is less than zero, it will never
+   * do merging
    */
   int merge_threshold;
   int split_multiplier;
@@ -77,23 +84,44 @@ private:
 
     void encode(bufferlist &bl) const
     {
+      using ceph::encode;
       __u8 v = 1;
-      ::encode(v, bl);
-      ::encode(objs, bl);
-      ::encode(subdirs, bl);
-      ::encode(hash_level, bl);
+      encode(v, bl);
+      encode(objs, bl);
+      encode(subdirs, bl);
+      encode(hash_level, bl);
     }
 
-    void decode(bufferlist::iterator &bl)
+    void decode(bufferlist::const_iterator &bl)
     {
+      using ceph::decode;
       __u8 v;
-      ::decode(v, bl);
+      decode(v, bl);
       assert(v == 1);
-      ::decode(objs, bl);
-      ::decode(subdirs, bl);
-      ::decode(hash_level, bl);
+      decode(objs, bl);
+      decode(subdirs, bl);
+      decode(hash_level, bl);
     }
   };
+
+  struct settings_s {
+    uint32_t split_rand_factor; ///< random factor added to split threshold (only on root of collection)
+    settings_s() : split_rand_factor(0) {}
+    void encode(bufferlist &bl) const
+    {
+      using ceph::encode;
+      __u8 v = 1;
+      encode(v, bl);
+      encode(split_rand_factor, bl);
+    }
+    void decode(bufferlist::const_iterator &bl)
+    {
+      using ceph::decode;
+      __u8 v;
+      decode(v, bl);
+      decode(split_rand_factor, bl);
+    }
+  } settings;
 
   /// Encodes in progress split or merge
   struct InProgressOp {
@@ -106,7 +134,7 @@ private:
     InProgressOp(int op, const vector<string> &path)
       : op(op), path(path) {}
 
-    explicit InProgressOp(bufferlist::iterator &bl) {
+    explicit InProgressOp(bufferlist::const_iterator &bl) {
       decode(bl);
     }
 
@@ -115,18 +143,20 @@ private:
     bool is_merge() const { return op == MERGE; }
 
     void encode(bufferlist &bl) const {
+      using ceph::encode;
       __u8 v = 1;
-      ::encode(v, bl);
-      ::encode(op, bl);
-      ::encode(path, bl);
+      encode(v, bl);
+      encode(op, bl);
+      encode(path, bl);
     }
 
-    void decode(bufferlist::iterator &bl) {
+    void decode(bufferlist::const_iterator &bl) {
+      using ceph::decode;
       __u8 v;
-      ::decode(v, bl);
+      decode(v, bl);
       assert(v == 1);
-      ::decode(op, bl);
-      ::decode(path, bl);
+      decode(op, bl);
+      decode(path, bl);
     }
   };
 
@@ -143,7 +173,10 @@ public:
     double retry_probability=0) ///< [in] retry probability
     : LFNIndex(cct, collection, base_path, index_version, retry_probability),
       merge_threshold(merge_at),
-      split_multiplier(split_multiple) {}
+      split_multiplier(split_multiple)
+  {}
+
+  int read_settings() override;
 
   /// @see CollectionIndex
   uint32_t collection_version() override { return index_version; }
@@ -162,7 +195,7 @@ public:
     ) override;
 
   /// @see CollectionIndex
-  int apply_layout_settings() override;
+  int apply_layout_settings(int target_level) override;
 
 protected:
   int _init() override;
@@ -245,7 +278,8 @@ private:
 
   /// Encapsulates logic for when to merge.
   bool must_split(
-    const subdir_info_s &info ///< [in] Info to check
+    const subdir_info_s &info, ///< [in] Info to check
+    int target_level = 0
     ); /// @return True if info must be split, False otherwise
 
   /// Initiates merge
@@ -361,7 +395,7 @@ private:
 
   struct CmpPairBitwise {
     bool operator()(const pair<string, ghobject_t>& l,
-		    const pair<string, ghobject_t>& r)
+		    const pair<string, ghobject_t>& r) const
     {
       if (l.first < r.first)
 	return true;
@@ -374,7 +408,7 @@ private:
   };
 
   struct CmpHexdigitStringBitwise {
-    bool operator()(const string& l, const string& r) {
+    bool operator()(const string& l, const string& r) const {
       return reverse_hexdigit_bits_string(l) < reverse_hexdigit_bits_string(r);
     }
   };
@@ -409,7 +443,9 @@ private:
   int recursive_create_path(vector<string>& path, int level);
 
   /// split each dir below the given path
-  int split_dirs(const vector<string> &path);
+  int split_dirs(const vector<string> &path, int target_level = 0);
+
+  int write_settings();
 };
 
 #endif

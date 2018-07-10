@@ -4,7 +4,7 @@ Experimental Features
 
 CephFS includes a number of experimental features which are not fully stabilized
 or qualified for users to turn on in real deployments. We generally do our best
-to clearly demarcate these and fence them off so they can't be used by mistake.
+to clearly demarcate these and fence them off so they cannot be used by mistake.
 
 Some of these features are closer to being done than others, though. We describe
 each of them with an approximation of how risky they are and briefly describe
@@ -21,27 +21,10 @@ load on the MDS. It is not sufficiently tested to support at this time, although
 failures within it are unlikely to make non-inlined data inaccessible
 
 Inline data has always been off by default and requires setting
-the "inline_data" flag.
-
-Multi-MDS filesystem clusters
------------------------------
-CephFS has been designed from the ground up to support fragmenting the metadata
-hierarchy across multiple active metadata servers, to allow horizontal scaling
-to arbitrary throughput requirements. Unfortunately, doing so requires a lot
-more working code than having a single MDS which is authoritative over the
-entire filesystem namespace.
-
-Multiple active MDSes are generally stable under trivial workloads, but often
-break in the presence of any failure, and do not have enough testing to offer
-any stability guarantees. If a filesystem with multiple active MDSes does
-experience failure, it will require (generally extensive) manual intervention.
-There are serious known bugs.
-
-Multi-MDS filesystems have always required explicitly increasing the "max_mds"
-value and have been further protected with the "allow_multimds" flag for Jewel.
+the ``inline_data`` flag.
 
 Mantle: Programmable Metadata Load Balancer
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------------------------
 
 Mantle is a programmable metadata balancer built into the MDS. The idea is to
 protect the mechanisms for balancing load (migration, replication,
@@ -61,9 +44,10 @@ some cases. Specifically, if you share a pool for multiple FSes and delete
 a snapshot in one FS, expect to lose snapshotted file data in any other FS using
 snapshots. See the :doc:`/dev/cephfs-snapshots` page for more information.
 
-Snapshots are known not to work with multi-MDS filesystems.
+For somewhat obscure implementation reasons, the kernel client only supports up
+to 400 snapshots (http://tracker.ceph.com/issues/21420).
 
-Snapshotting was blocked off with the "allow_new_snaps" flag prior to Firefly.
+Snapshotting was blocked off with the ``allow_new_snaps`` flag prior to Mimic.
 
 Multiple filesystems within a Ceph cluster
 ------------------------------------------
@@ -84,7 +68,7 @@ Note that snapshots and multiple filesystems are *not* tested in combination
 and may not work together; see above.
 
 Multiple filesystems were available starting in the Jewel release candidates
-but were protected behind the "enable_multiple" flag before the final release.
+but must be turned on via the ``enable_multiple`` flag until declared stable.
 
 
 Previously experimental features
@@ -100,5 +84,23 @@ the ``allow_dirfrags`` flag on the filesystem:
 
 ::
 
-    ceph fs set <filesystem name> allow_dirfrags
+    ceph fs set <filesystem name> allow_dirfrags 1
+
+Multiple active metadata servers
+--------------------------------
+
+Prior to the *Luminous* (12.2.x) release, running multiple active metadata
+servers within a single filesystem was considered experimental.  Creating
+multiple active metadata servers is now permitted by default on new
+filesystems.
+
+Filesystems created with older versions of Ceph still require explicitly
+enabling multiple active metadata servers as follows:
+
+::
+
+    ceph fs set <filesystem name> allow_multimds 1
+
+Note that the default size of the active mds cluster (``max_mds``) is
+still set to 1 initially.
 

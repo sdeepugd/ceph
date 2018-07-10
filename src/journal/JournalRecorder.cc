@@ -6,6 +6,8 @@
 #include "journal/Entry.h"
 #include "journal/Utils.h"
 
+#include <atomic>
+
 #define dout_subsys ceph_subsys_journaler
 #undef dout_prefix
 #define dout_prefix *_dout << "JournalRecorder: " << this << " "
@@ -19,7 +21,7 @@ namespace {
 struct C_Flush : public Context {
   JournalMetadataPtr journal_metadata;
   Context *on_finish;
-  atomic_t pending_flushes;
+  std::atomic<int64_t> pending_flushes = { 0 };
   int ret_val;
 
   C_Flush(JournalMetadataPtr _journal_metadata, Context *_on_finish,
@@ -32,7 +34,7 @@ struct C_Flush : public Context {
     if (r < 0 && ret_val == 0) {
       ret_val = r;
     }
-    if (pending_flushes.dec() == 0) {
+    if (--pending_flushes == 0) {
       // ensure all prior callback have been flushed as well
       journal_metadata->queue(on_finish, ret_val);
       delete this;
@@ -101,8 +103,8 @@ Future JournalRecorder::append(uint64_t tag_tid,
   m_lock.Unlock();
 
   bufferlist entry_bl;
-  ::encode(Entry(future->get_tag_tid(), future->get_entry_tid(), payload_bl),
-           entry_bl);
+  encode(Entry(future->get_tag_tid(), future->get_entry_tid(), payload_bl),
+	 entry_bl);
   assert(entry_bl.length() <= m_journal_metadata->get_object_size());
 
   bool object_full = object_ptr->append_unlock({{future, entry_bl}});

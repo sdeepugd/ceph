@@ -17,8 +17,6 @@
 
 #include <vector>
 #include <sstream>
-#include <iomanip>
-#include <string>
 #include "include/assert.h"
 
 /**
@@ -47,7 +45,7 @@ private:
     Align col_align;
 
     TextTableColumn() {}
-    TextTableColumn(std::string h, int w, Align ha, Align ca) :
+    TextTableColumn(const std::string &h, int w, Align ha, Align ca) :
 		    heading(h), width(w), hd_align(ha), col_align(ca) { }
     ~TextTableColumn() {}
   };

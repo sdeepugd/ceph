@@ -48,7 +48,7 @@ least one :term:`Ceph Metadata Server` running.
 .. toctree:: 
 	:maxdepth: 1
 
-	Add/Remove MDS(s) <../../rados/deployment/ceph-deploy-mds>
+	Add/Remove MDS(s) <add-remove-mds>
 	MDS failover and standby configuration <standby>
 	MDS Configuration Settings <mds-config-ref>
 	Client Configuration Settings <client-config-ref>
@@ -61,7 +61,7 @@ least one :term:`Ceph Metadata Server` running.
 
 Once you have a healthy Ceph Storage Cluster with at least
 one Ceph Metadata Server, you may create and mount your Ceph Filesystem.
-Ensure that you client has network connectivity and the proper
+Ensure that your client has network connectivity and the proper
 authentication keyring.
 
 .. toctree:: 
@@ -73,6 +73,7 @@ authentication keyring.
 	Mount CephFS in fstab <fstab>
 	Manpage ceph-fuse <../../man/8/ceph-fuse>
 	Manpage mount.ceph <../../man/8/mount.ceph>
+	Manpage mount.fuse.ceph <../../man/8/mount.fuse.ceph>
 
 
 .. raw:: html 
@@ -84,6 +85,7 @@ authentication keyring.
 
     Deployment best practices <best-practices>
     Administrative commands <administration>
+    Understanding MDS Cache Size Limits <cache-size-limits>
     POSIX compatibility <posix>
     Experimental Features <experimental-features>
     CephFS Quotas <quota>
@@ -99,6 +101,7 @@ authentication keyring.
     Upgrading old filesystems <upgrading>
     Configuring directory fragmentation <dirfrags>
     Configuring multiple active MDS daemons <multimds>
+    Export over NFS <nfs>
 
 .. raw:: html
 

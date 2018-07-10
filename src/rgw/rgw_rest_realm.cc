@@ -26,9 +26,7 @@ class RGWOp_Period_Base : public RGWRESTOp {
 // reply with the period object on success
 void RGWOp_Period_Base::send_response()
 {
-  s->err.message = error_stream.str();
-
-  set_req_state_err(s, http_ret);
+  set_req_state_err(s, http_ret, error_stream.str());
   dump_errno(s);
 
   if (http_ret < 0) {
@@ -49,7 +47,7 @@ void RGWOp_Period_Base::send_response()
 class RGWOp_Period_Get : public RGWOp_Period_Base {
  public:
   void execute() override;
-  const string name() override { return "get_period"; }
+  const char* name() const override { return "get_period"; }
 };
 
 void RGWOp_Period_Get::execute()
@@ -73,7 +71,7 @@ void RGWOp_Period_Get::execute()
 class RGWOp_Period_Post : public RGWOp_Period_Base {
  public:
   void execute() override;
-  const string name() override { return "post_period"; }
+  const char* name() const override { return "post_period"; }
 };
 
 void RGWOp_Period_Post::execute()
@@ -142,6 +140,19 @@ void RGWOp_Period_Post::execute()
     lderr(cct) << "failed to store period " << period.get_id() << dendl;
     return;
   }
+  // set as latest epoch
+  http_ret = period.update_latest_epoch(period.get_epoch());
+  if (http_ret == -EEXIST) {
+    // already have this epoch (or a more recent one)
+    ldout(cct, 4) << "already have epoch >= " << period.get_epoch()
+        << " for period " << period.get_id() << dendl;
+    http_ret = 0;
+    return;
+  }
+  if (http_ret < 0) {
+    lderr(cct) << "failed to set latest epoch" << dendl;
+    return;
+  }
 
   // decide whether we can set_current_period() or set_latest_epoch()
   if (period.get_id() != current_period.get_id()) {
@@ -192,22 +203,9 @@ void RGWOp_Period_Post::execute()
     realm.notify_new_period(period);
     return;
   }
-
-  if (period.get_epoch() <= current_period.get_epoch()) {
-    lderr(cct) << "period epoch " << period.get_epoch() << " is not newer "
-        "than current epoch " << current_period.get_epoch()
-        << ", discarding update" << dendl;
-    return;
-  }
-  // set as latest epoch
-  http_ret = period.set_latest_epoch(period.get_epoch());
-  if (http_ret < 0) {
-    lderr(cct) << "failed to set latest epoch" << dendl;
-    return;
-  }
   // reflect the period into our local objects
-  http_ret  = period.reflect();
-  if (http_ret  < 0) {
+  http_ret = period.reflect();
+  if (http_ret < 0) {
     lderr(cct) << "failed to update local objects: "
         << cpp_strerror(-http_ret) << dendl;
     return;
@@ -245,7 +243,7 @@ public:
   int verify_permission() override { return 0; }
   void execute() override;
   void send_response() override;
-  const string name() override { return "get_realm"; }
+  const char* name() const override { return "get_realm"; }
 };
 
 void RGWOp_Realm_Get::execute()

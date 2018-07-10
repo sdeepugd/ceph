@@ -26,11 +26,6 @@
  *
  * Author: Haomai Wang <haomaiwang@gmail.com>
  *
- * This is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License version 2.1, as published by the Free Software
- * Foundation.  See file COPYING.
- *
  */
 
 #include "net.h"
@@ -44,8 +39,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "net "
 
-interface::interface(CephContext *c, std::shared_ptr<DPDKDevice> dev, EventCenter *center)
-    : cct(c), _dev(dev),
+interface::interface(CephContext *cct, std::shared_ptr<DPDKDevice> dev, EventCenter *center)
+    : cct(cct), _dev(dev),
       _rx(_dev->receive(
           center->get_id(),
           [center, this] (Packet p) {
@@ -112,7 +107,7 @@ class C_handle_l2forward : public EventCallback {
  public:
   C_handle_l2forward(std::shared_ptr<DPDKDevice> &p, unsigned &qd, Packet pkt, unsigned target)
       : sdev(p), queue_depth(qd), p(std::move(pkt)), dst(target) {}
-  void do_request(int fd) {
+  void do_request(uint64_t fd) {
     sdev->l2receive(dst, std::move(p));
     queue_depth--;
     delete this;
@@ -184,7 +179,7 @@ class C_arp_learn : public EventCallback {
  public:
   C_arp_learn(DPDKWorker *w, ethernet_address l2, ipv4_address l3)
       : worker(w), l2_addr(l2), l3_addr(l3) {}
-  void do_request(int id) {
+  void do_request(uint64_t id) {
     worker->arp_learn(l2_addr, l3_addr);
     delete this;
   }

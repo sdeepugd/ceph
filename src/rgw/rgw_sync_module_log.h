@@ -9,7 +9,7 @@ public:
   bool supports_data_export() override {
     return false;
   }
-  int create_instance(CephContext *cct, map<string, string>& config, RGWSyncModuleInstanceRef *instance) override;
+  int create_instance(CephContext *cct, const JSONFormattable& config, RGWSyncModuleInstanceRef *instance) override;
 };
 
 #endif

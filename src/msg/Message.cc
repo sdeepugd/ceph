@@ -7,7 +7,6 @@
 #endif
 
 #include <iostream>
-using namespace std;
 
 #include "include/types.h"
 
@@ -35,6 +34,8 @@ using namespace std;
 #include "messages/MMonCommand.h"
 #include "messages/MMonCommandAck.h"
 #include "messages/MMonPaxos.h"
+#include "messages/MConfig.h"
+#include "messages/MGetConfig.h"
 
 #include "messages/MMonProbe.h"
 #include "messages/MMonJoin.h"
@@ -65,8 +66,6 @@ using namespace std;
 #include "messages/MOSDPing.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
-#include "messages/MOSDSubOp.h"
-#include "messages/MOSDSubOpReply.h"
 #include "messages/MOSDRepOp.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDMap.h"
@@ -79,15 +78,20 @@ using namespace std;
 #include "messages/MOSDPGRemove.h"
 #include "messages/MOSDPGInfo.h"
 #include "messages/MOSDPGCreate.h"
+#include "messages/MOSDPGCreate2.h"
 #include "messages/MOSDPGTrim.h"
 #include "messages/MOSDScrub.h"
+#include "messages/MOSDScrub2.h"
 #include "messages/MOSDScrubReserve.h"
 #include "messages/MOSDRepScrub.h"
 #include "messages/MOSDRepScrubMap.h"
+#include "messages/MOSDForceRecovery.h"
 #include "messages/MOSDPGScan.h"
 #include "messages/MOSDPGBackfill.h"
 #include "messages/MOSDBackoff.h"
 #include "messages/MOSDPGBackfillRemove.h"
+#include "messages/MOSDPGRecoveryDelete.h"
+#include "messages/MOSDPGRecoveryDeleteReply.h"
 
 #include "messages/MRemoveSnaps.h"
 
@@ -96,6 +100,7 @@ using namespace std;
 #include "messages/MMonGetVersion.h"
 #include "messages/MMonGetVersionReply.h"
 #include "messages/MMonHealth.h"
+#include "messages/MMonHealthChecks.h"
 #include "messages/MMonMetadata.h"
 #include "messages/MDataPing.h"
 #include "messages/MAuth.h"
@@ -128,6 +133,7 @@ using namespace std;
 #include "messages/MMDSFindInoReply.h"
 #include "messages/MMDSOpenIno.h"
 #include "messages/MMDSOpenInoReply.h"
+#include "messages/MMDSSnapUpdate.h"
 
 #include "messages/MDirUpdate.h"
 #include "messages/MDiscover.h"
@@ -167,12 +173,16 @@ using namespace std;
 #include "messages/MMgrDigest.h"
 #include "messages/MMgrReport.h"
 #include "messages/MMgrOpen.h"
+#include "messages/MMgrClose.h"
 #include "messages/MMgrConfigure.h"
+#include "messages/MMonMgrReport.h"
+#include "messages/MServiceMap.h"
 
 #include "messages/MLock.h"
 
 #include "messages/MWatchNotify.h"
 #include "messages/MTimeCheck.h"
+#include "messages/MTimeCheck2.h"
 
 #include "common/config.h"
 
@@ -225,7 +235,7 @@ void Message::encode(uint64_t features, int crcflags)
 
 #ifdef ENCODE_DUMP
     bufferlist bl;
-    ::encode(get_header(), bl);
+    encode(get_header(), bl);
 
     // dump the old footer format
     ceph_msg_footer_old old_footer;
@@ -233,11 +243,11 @@ void Message::encode(uint64_t features, int crcflags)
     old_footer.middle_crc = footer.middle_crc;
     old_footer.data_crc = footer.data_crc;
     old_footer.flags = footer.flags;
-    ::encode(old_footer, bl);
+    encode(old_footer, bl);
 
-    ::encode(get_payload(), bl);
-    ::encode(get_middle(), bl);
-    ::encode(get_data(), bl);
+    encode(get_payload(), bl);
+    encode(get_middle(), bl);
+    encode(get_data(), bl);
 
     // this is almost an exponential backoff, except because we count
     // bits we tend to sample things we encode later, which should be
@@ -276,7 +286,7 @@ Message *decode_message(CephContext *cct, int crcflags,
 			ceph_msg_header& header,
 			ceph_msg_footer& footer,
 			bufferlist& front, bufferlist& middle,
-			bufferlist& data)
+			bufferlist& data, Connection* conn)
 {
   // verify crc
   if (crcflags & MSG_CRC_HEADER) {
@@ -358,6 +368,12 @@ Message *decode_message(CephContext *cct, int crcflags,
   case MSG_MON_PAXOS:
     m = new MMonPaxos;
     break;
+  case MSG_CONFIG:
+    m = new MConfig;
+    break;
+  case MSG_GET_CONFIG:
+    m = new MGetConfig;
+    break;
 
   case MSG_MON_PROBE:
     m = new MMonProbe;
@@ -396,6 +412,9 @@ Message *decode_message(CephContext *cct, int crcflags,
     break;
   case MSG_OSD_RECOVERY_RESERVE:
     m = new MRecoveryReserve;
+    break;
+  case MSG_OSD_FORCE_RECOVERY:
+    m = new MOSDForceRecovery;
     break;
 
   case MSG_ROUTE:
@@ -454,12 +473,6 @@ Message *decode_message(CephContext *cct, int crcflags,
   case CEPH_MSG_OSD_OPREPLY:
     m = new MOSDOpReply();
     break;
-  case MSG_OSD_SUBOP:
-    m = new MOSDSubOp();
-    break;
-  case MSG_OSD_SUBOPREPLY:
-    m = new MOSDSubOpReply();
-    break;
   case MSG_OSD_REPOP:
     m = new MOSDRepOp();
     break;
@@ -505,12 +518,18 @@ Message *decode_message(CephContext *cct, int crcflags,
   case MSG_OSD_PG_CREATE:
     m = new MOSDPGCreate;
     break;
+  case MSG_OSD_PG_CREATE2:
+    m = new MOSDPGCreate2;
+    break;
   case MSG_OSD_PG_TRIM:
     m = new MOSDPGTrim;
     break;
 
   case MSG_OSD_SCRUB:
     m = new MOSDScrub;
+    break;
+  case MSG_OSD_SCRUB2:
+    m = new MOSDScrub2;
     break;
   case MSG_OSD_SCRUB_RESERVE:
     m = new MOSDScrubReserve;
@@ -541,6 +560,12 @@ Message *decode_message(CephContext *cct, int crcflags,
     break;
   case MSG_OSD_PG_PUSH_REPLY:
     m = new MOSDPGPushReply;
+    break;
+  case MSG_OSD_PG_RECOVERY_DELETE:
+    m = new MOSDPGRecoveryDelete;
+    break;
+  case MSG_OSD_PG_RECOVERY_DELETE_REPLY:
+    m = new MOSDPGRecoveryDeleteReply;
     break;
   case MSG_OSD_EC_WRITE:
     m = new MOSDECSubOpWrite;
@@ -659,6 +684,10 @@ Message *decode_message(CephContext *cct, int crcflags,
     m = new MMDSOpenInoReply;
     break;
 
+  case MSG_MDS_SNAPUPDATE:
+    m = new MMDSSnapUpdate();
+    break;
+
   case MSG_MDS_FRAGMENTNOTIFY:
     m = new MMDSFragmentNotify;
     break;
@@ -746,6 +775,14 @@ Message *decode_message(CephContext *cct, int crcflags,
     m = new MMgrBeacon();
     break;
 
+  case MSG_MON_MGR_REPORT:
+    m = new MMonMgrReport();
+    break;
+
+  case MSG_SERVICE_MAP:
+    m = new MServiceMap();
+    break;
+
   case MSG_MGR_MAP:
     m = new MMgrMap();
     break;
@@ -756,6 +793,10 @@ Message *decode_message(CephContext *cct, int crcflags,
 
   case MSG_MGR_OPEN:
     m = new MMgrOpen();
+    break;
+
+  case MSG_MGR_CLOSE:
+    m = new MMgrClose();
     break;
 
   case MSG_MGR_REPORT:
@@ -769,10 +810,18 @@ Message *decode_message(CephContext *cct, int crcflags,
   case MSG_TIMECHECK:
     m = new MTimeCheck();
     break;
+  case MSG_TIMECHECK2:
+    m = new MTimeCheck2();
+    break;
 
   case MSG_MON_HEALTH:
     m = new MMonHealth();
     break;
+
+  case MSG_MON_HEALTH_CHECKS:
+    m = new MMonHealthChecks();
+    break;
+
 #if defined(HAVE_XIO)
   case MSG_DATA_PING:
     m = new MDataPing();
@@ -812,6 +861,7 @@ Message *decode_message(CephContext *cct, int crcflags,
     return 0;
   }
 
+  m->set_connection(conn);
   m->set_header(header);
   m->set_footer(footer);
   m->set_payload(front);
@@ -826,7 +876,8 @@ Message *decode_message(CephContext *cct, int crcflags,
       lderr(cct) << "failed to decode message of type " << type
 		 << " v" << header.version
 		 << ": " << e.what() << dendl;
-      ldout(cct, cct->_conf->ms_dump_corrupt_message_level) << "dump: \n";
+      ldout(cct, ceph::dout::need_dynamic(
+	cct->_conf->ms_dump_corrupt_message_level)) << "dump: \n";
       m->get_payload().hexdump(*_dout);
       *_dout << dendl;
       if (cct->_conf->ms_die_on_bad_msg)
@@ -838,6 +889,43 @@ Message *decode_message(CephContext *cct, int crcflags,
 
   // done!
   return m;
+}
+
+void Message::encode_trace(bufferlist &bl, uint64_t features) const
+{
+  using ceph::encode;
+  auto p = trace.get_info();
+  static const blkin_trace_info empty = { 0, 0, 0 };
+  if (!p) {
+    p = &empty;
+  }
+  encode(*p, bl);
+}
+
+void Message::decode_trace(bufferlist::const_iterator &p, bool create)
+{
+  blkin_trace_info info = {};
+  decode(info, p);
+
+#ifdef WITH_BLKIN
+  if (!connection)
+    return;
+
+  const auto msgr = connection->get_messenger();
+  const auto endpoint = msgr->get_trace_endpoint();
+  if (info.trace_id) {
+    trace.init(get_type_name(), endpoint, &info, true);
+    trace.event("decoded trace");
+  } else if (create || (msgr->get_myname().is_osd() &&
+                        msgr->cct->_conf->osd_blkin_trace_all)) {
+    // create a trace even if we didn't get one on the wire
+    trace.init(get_type_name(), endpoint);
+    trace.event("created trace");
+  }
+  trace.keyval("tid", get_tid());
+  trace.keyval("entity type", get_source().type_str());
+  trace.keyval("entity num", get_source().num());
+#endif
 }
 
 
@@ -853,7 +941,7 @@ void encode_message(Message *msg, uint64_t features, bufferlist& payload)
   ceph_msg_footer_old old_footer;
   ceph_msg_footer footer;
   msg->encode(features, MSG_CRC_ALL);
-  ::encode(msg->get_header(), payload);
+  encode(msg->get_header(), payload);
 
   // Here's where we switch to the old footer format.  PLR
 
@@ -862,11 +950,11 @@ void encode_message(Message *msg, uint64_t features, bufferlist& payload)
   old_footer.middle_crc = footer.middle_crc;   
   old_footer.data_crc = footer.data_crc;   
   old_footer.flags = footer.flags;   
-  ::encode(old_footer, payload);
+  encode(old_footer, payload);
 
-  ::encode(msg->get_payload(), payload);
-  ::encode(msg->get_middle(), payload);
-  ::encode(msg->get_data(), payload);
+  encode(msg->get_payload(), payload);
+  encode(msg->get_middle(), payload);
+  encode(msg->get_data(), payload);
 }
 
 // See above for somewhat bogus use of the old message footer.  We switch to the current footer
@@ -874,22 +962,21 @@ void encode_message(Message *msg, uint64_t features, bufferlist& payload)
 // We've slipped in a 0 signature at this point, so any signature checking after this will
 // fail.  PLR
 
-Message *decode_message(CephContext *cct, int crcflags, bufferlist::iterator& p)
+Message *decode_message(CephContext *cct, int crcflags, bufferlist::const_iterator& p)
 {
   ceph_msg_header h;
   ceph_msg_footer_old fo;
   ceph_msg_footer f;
   bufferlist fr, mi, da;
-  ::decode(h, p);
-  ::decode(fo, p);
+  decode(h, p);
+  decode(fo, p);
   f.front_crc = fo.front_crc;
   f.middle_crc = fo.middle_crc;
   f.data_crc = fo.data_crc;
   f.flags = fo.flags;
   f.sig = 0;
-  ::decode(fr, p);
-  ::decode(mi, p);
-  ::decode(da, p);
-  return decode_message(cct, crcflags, h, f, fr, mi, da);
+  decode(fr, p);
+  decode(mi, p);
+  decode(da, p);
+  return decode_message(cct, crcflags, h, f, fr, mi, da, nullptr);
 }
-

@@ -6,6 +6,7 @@
 #include "include/rados/librados.h"
 #include "include/rados/librados.hpp"
 #include "include/encoding.h"
+#include "include/err.h"
 #include "include/scope_guard.h"
 #include "test/librados/test.h"
 #include "test/librados/TestCase.h"
@@ -325,16 +326,16 @@ TEST_F(LibRadosIoPP, Checksum) {
   bl.append(buf, sizeof(buf));
   ASSERT_EQ(0, ioctx.write("foo", bl, sizeof(buf), 0));
   bufferlist init_value_bl;
-  ::encode(static_cast<uint32_t>(-1), init_value_bl);
+  encode(static_cast<uint32_t>(-1), init_value_bl);
   bufferlist csum_bl;
   ASSERT_EQ(0, ioctx.checksum("foo", LIBRADOS_CHECKSUM_TYPE_CRC32C,
 			      init_value_bl, sizeof(buf), 0, 0, &csum_bl));
-  auto csum_bl_it = csum_bl.begin();
+  auto csum_bl_it = csum_bl.cbegin();
   uint32_t csum_count;
-  ::decode(csum_count, csum_bl_it);
+  decode(csum_count, csum_bl_it);
   ASSERT_EQ(1U, csum_count);
   uint32_t csum;
-  ::decode(csum, csum_bl_it);
+  decode(csum, csum_bl_it);
   ASSERT_EQ(bl.crc32c(-1), csum);
 }
 
@@ -1207,4 +1208,118 @@ TEST_F(LibRadosIoECPP, XattrListPP) {
       ASSERT_EQ(0, 1);
     }
   }
+}
+
+TEST_F(LibRadosIoPP, CmpExtPP) {
+  bufferlist bl;
+  bl.append("ceph");
+  ObjectWriteOperation write1;
+  write1.write(0, bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write1));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write2;
+  write2.cmpext(0, bl, nullptr);
+  write2.write(0, new_bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write2));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "CEPH", 4));
+}
+
+TEST_F(LibRadosIoPP, CmpExtDNEPP) {
+  bufferlist bl;
+  bl.append(std::string(4, '\0'));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write;
+  write.cmpext(0, bl, nullptr);
+  write.write(0, new_bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "CEPH", 4));
+}
+
+TEST_F(LibRadosIoPP, CmpExtMismatchPP) {
+  bufferlist bl;
+  bl.append("ceph");
+  ObjectWriteOperation write1;
+  write1.write(0, bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write1));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write2;
+  write2.cmpext(0, new_bl, nullptr);
+  write2.write(0, new_bl);
+  ASSERT_EQ(-MAX_ERRNO, ioctx.operate("foo", &write2));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "ceph", 4));
+}
+
+TEST_F(LibRadosIoECPP, CmpExtPP) {
+  bufferlist bl;
+  bl.append("ceph");
+  ObjectWriteOperation write1;
+  write1.write(0, bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write1));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write2;
+  write2.cmpext(0, bl, nullptr);
+  write2.write_full(new_bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write2));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "CEPH", 4));
+}
+
+TEST_F(LibRadosIoECPP, CmpExtDNEPP) {
+  bufferlist bl;
+  bl.append(std::string(4, '\0'));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write;
+  write.cmpext(0, bl, nullptr);
+  write.write_full(new_bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "CEPH", 4));
+}
+
+TEST_F(LibRadosIoECPP, CmpExtMismatchPP) {
+  bufferlist bl;
+  bl.append("ceph");
+  ObjectWriteOperation write1;
+  write1.write(0, bl);
+  ASSERT_EQ(0, ioctx.operate("foo", &write1));
+
+  bufferlist new_bl;
+  new_bl.append("CEPH");
+  ObjectWriteOperation write2;
+  write2.cmpext(0, new_bl, nullptr);
+  write2.write_full(new_bl);
+  ASSERT_EQ(-MAX_ERRNO, ioctx.operate("foo", &write2));
+
+  ObjectReadOperation read;
+  read.read(0, bl.length(), NULL, NULL);
+  ASSERT_EQ(0, ioctx.operate("foo", &read, &bl));
+  ASSERT_EQ(0, memcmp(bl.c_str(), "ceph", 4));
 }

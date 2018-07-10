@@ -14,6 +14,8 @@
  *
  */
 
+#include <mutex>
+
 #include "include/compat.h"
 #include "common/Cond.h"
 #include "common/errno.h"
@@ -37,9 +39,9 @@ std::function<void ()> NetworkStack::add_thread(unsigned i)
   Worker *w = workers[i];
   return [this, w]() {
       char tp_name[16];
-      sprintf(tp_name, "msgr-worker-%d", w->id);
+      sprintf(tp_name, "msgr-worker-%u", w->id);
       ceph_pthread_setname(pthread_self(), tp_name);
-      const uint64_t EventMaxWaitUs = 30000000;
+      const unsigned EventMaxWaitUs = 30000000;
       w->center.set_owner();
       ldout(cct, 10) << __func__ << " starting" << dendl;
       w->initialize();
@@ -47,12 +49,14 @@ std::function<void ()> NetworkStack::add_thread(unsigned i)
       while (!w->done) {
         ldout(cct, 30) << __func__ << " calling event process" << dendl;
 
-        int r = w->center.process_events(EventMaxWaitUs);
+        ceph::timespan dur;
+        int r = w->center.process_events(EventMaxWaitUs, &dur);
         if (r < 0) {
           ldout(cct, 20) << __func__ << " process events failed: "
                          << cpp_strerror(errno) << dendl;
           // TODO do something?
         }
+        w->perf_logger->tinc(l_msgr_running_total_time, dur);
       }
       w->reset();
       w->destroy();
@@ -99,6 +103,8 @@ Worker* NetworkStack::create_worker(CephContext *c, const string &type, unsigned
 
 NetworkStack::NetworkStack(CephContext *c, const string &t): type(t), started(false), cct(c)
 {
+  assert(cct->_conf->ms_async_op_threads > 0);
+
   const uint64_t InitEventNumber = 5000;
   num_workers = cct->_conf->ms_async_op_threads;
   if (num_workers >= EventCenter::MAX_EVENTCENTER) {
@@ -114,14 +120,13 @@ NetworkStack::NetworkStack(CephContext *c, const string &t): type(t), started(fa
     w->center.init(InitEventNumber, i, type);
     workers.push_back(w);
   }
-  cct->register_fork_watcher(this);
 }
 
 void NetworkStack::start()
 {
-  pool_spin.lock();
+  std::unique_lock<decltype(pool_spin)> lk(pool_spin);
+
   if (started) {
-    pool_spin.unlock();
     return ;
   }
 
@@ -132,7 +137,7 @@ void NetworkStack::start()
     spawn_worker(i, std::move(thread));
   }
   started = true;
-  pool_spin.unlock();
+  lk.unlock();
 
   for (unsigned i = 0; i < num_workers; ++i)
     workers[i]->wait_for_init();
@@ -166,7 +171,7 @@ Worker* NetworkStack::get_worker()
 
 void NetworkStack::stop()
 {
-  Spinlock::Locker l(pool_spin);
+  std::lock_guard<decltype(pool_spin)> lk(pool_spin);
   for (unsigned i = 0; i < num_workers; ++i) {
     workers[i]->done = true;
     workers[i]->center.wakeup();
@@ -184,7 +189,7 @@ class C_drain : public EventCallback {
   explicit C_drain(size_t c)
       : drain_lock("C_drain::drain_lock"),
         drain_count(c) {}
-  void do_request(int id) override {
+  void do_request(uint64_t id) override {
     Mutex::Locker l(drain_lock);
     drain_count--;
     if (drain_count == 0) drain_cond.Signal();

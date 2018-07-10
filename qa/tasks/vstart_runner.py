@@ -155,7 +155,7 @@ class LocalRemoteProcess(object):
         if self.finished:
             # Avoid calling communicate() on a dead process because it'll
             # give you stick about std* already being closed
-            if self.exitstatus != 0:
+            if self.check_status and self.exitstatus != 0:
                 raise CommandFailedError(self.args, self.exitstatus)
             else:
                 return
@@ -419,7 +419,18 @@ class LocalFuseMount(FuseMount):
         # the PID of the launching process, not the long running ceph-fuse process.  Therefore
         # we need to give an exact path here as the logic for checking /proc/ for which
         # asok is alive does not work.
-        path = "./out/client.{0}.{1}.asok".format(self.client_id, self.fuse_daemon.subproc.pid)
+
+        # Load the asok path from ceph.conf as vstart.sh now puts admin sockets
+        # in a tmpdir. All of the paths are the same, so no need to select
+        # based off of the service type.
+        d = "./out"
+        with open(self.config_path) as f:
+            for line in f:
+                asok_conf = re.search("^\s*admin\s+socket\s*=\s*(.*?)[^/]+$", line)
+                if asok_conf:
+                    d = asok_conf.groups(1)[0]
+                    break
+        path = "{0}/client.{1}.{2}.asok".format(d, self.client_id, self.fuse_daemon.subproc.pid)
         log.info("I think my launching pid was {0}".format(self.fuse_daemon.subproc.pid))
         return path
 
@@ -462,7 +473,7 @@ class LocalFuseMount(FuseMount):
 
         prefix = [os.path.join(BIN_PREFIX, "ceph-fuse")]
         if os.getuid() != 0:
-            prefix += ["--client-die-on-failed-remount=false"]
+            prefix += ["--client_die_on_failed_dentry_invalidate=false"]
 
         if mount_path is not None:
             prefix += ["--client_mountpoint={0}".format(mount_path)]
@@ -541,59 +552,26 @@ class LocalCephManager(CephManager):
         proc = self.controller.run([os.path.join(BIN_PREFIX, "ceph"), "-w"], wait=False, stdout=StringIO())
         return proc
 
-    def raw_cluster_cmd(self, *args):
+    def raw_cluster_cmd(self, *args, **kwargs):
         """
         args like ["osd", "dump"}
         return stdout string
         """
-        proc = self.controller.run([os.path.join(BIN_PREFIX, "ceph")] + list(args))
+        proc = self.controller.run([os.path.join(BIN_PREFIX, "ceph")] + list(args), **kwargs)
         return proc.stdout.getvalue()
 
-    def raw_cluster_cmd_result(self, *args):
+    def raw_cluster_cmd_result(self, *args, **kwargs):
         """
         like raw_cluster_cmd but don't check status, just return rc
         """
-        proc = self.controller.run([os.path.join(BIN_PREFIX, "ceph")] + list(args), check_status=False)
+        kwargs['check_status'] = False
+        proc = self.controller.run([os.path.join(BIN_PREFIX, "ceph")] + list(args), **kwargs)
         return proc.exitstatus
 
     def admin_socket(self, daemon_type, daemon_id, command, check_status=True):
         return self.controller.run(
             args=[os.path.join(BIN_PREFIX, "ceph"), "daemon", "{0}.{1}".format(daemon_type, daemon_id)] + command, check_status=check_status
         )
-
-    # FIXME: copypasta
-    def get_mds_status(self, mds):
-        """
-        Run cluster commands for the mds in order to get mds information
-        """
-        out = self.raw_cluster_cmd('mds', 'dump', '--format=json')
-        j = json.loads(' '.join(out.splitlines()[1:]))
-        # collate; for dup ids, larger gid wins.
-        for info in j['info'].itervalues():
-            if info['name'] == mds:
-                return info
-        return None
-
-    # FIXME: copypasta
-    def get_mds_status_by_rank(self, rank):
-        """
-        Run cluster commands for the mds in order to get mds information
-        check rank.
-        """
-        j = self.get_mds_status_all()
-        # collate; for dup ids, larger gid wins.
-        for info in j['info'].itervalues():
-            if info['rank'] == rank:
-                return info
-        return None
-
-    def get_mds_status_all(self):
-        """
-        Run cluster command to extract all the mds status.
-        """
-        out = self.raw_cluster_cmd('mds', 'dump', '--format=json')
-        j = json.loads(' '.join(out.splitlines()[1:]))
-        return j
 
 
 class LocalCephCluster(CephCluster):
@@ -678,8 +656,8 @@ class LocalMDSCluster(LocalCephCluster, MDSCluster):
         # FIXME: unimplemented
         pass
 
-    def newfs(self, name):
-        return LocalFilesystem(self._ctx, create=name)
+    def newfs(self, name='cephfs', create=True):
+        return LocalFilesystem(self._ctx, name=name, create=create)
 
 
 class LocalMgrCluster(LocalCephCluster, MgrCluster):
@@ -691,13 +669,16 @@ class LocalMgrCluster(LocalCephCluster, MgrCluster):
 
 
 class LocalFilesystem(Filesystem, LocalMDSCluster):
-    def __init__(self, ctx, fscid=None, create=None):
+    def __init__(self, ctx, fscid=None, name='cephfs', create=False):
         # Deliberately skip calling parent constructor
         self._ctx = ctx
 
         self.id = None
         self.name = None
+        self.ec_profile = None
         self.metadata_pool_name = None
+        self.metadata_overlay = False
+        self.data_pool_name = None
         self.data_pools = None
 
         # Hack: cheeky inspection of ceph.conf to see what MDSs exist
@@ -722,17 +703,15 @@ class LocalFilesystem(Filesystem, LocalMDSCluster):
 
         self._conf = defaultdict(dict)
 
-        if create is not None:
+        if name is not None:
             if fscid is not None:
                 raise RuntimeError("cannot specify fscid when creating fs")
-            if create is True:
-                self.name = 'cephfs'
-            else:
-                self.name = create
-            self.create()
-        elif fscid is not None:
-            self.id = fscid
-        self.getinfo(refresh=True)
+            if create and not self.legacy_configured():
+                self.create()
+        else:
+            if fscid is not None:
+                self.id = fscid
+                self.getinfo(refresh=True)
 
         # Stash a reference to the first created filesystem on ctx, so
         # that if someone drops to the interactive shell they can easily
@@ -910,7 +889,7 @@ def exec_test():
 
         # Wait for OSD to come up so that subsequent injectargs etc will
         # definitely succeed
-        LocalCephCluster(LocalContext()).mon_manager.wait_for_all_up(timeout=30)
+        LocalCephCluster(LocalContext()).mon_manager.wait_for_all_osds_up(timeout=30)
 
     # List of client mounts, sufficient to run the selected tests
     clients = [i.__str__() for i in range(0, max_required_clients)]
@@ -976,8 +955,8 @@ def exec_test():
 
     # For the benefit of polling tests like test_full -- in teuthology land we set this
     # in a .yaml, here it's just a hardcoded thing for the developer's pleasure.
-    remote.run(args=[os.path.join(BIN_PREFIX, "ceph"), "tell", "osd.*", "injectargs", "--osd-mon-report-interval-max", "5"])
-    ceph_cluster.set_ceph_conf("osd", "osd_mon_report_interval_max", "5")
+    remote.run(args=[os.path.join(BIN_PREFIX, "ceph"), "tell", "osd.*", "injectargs", "--osd-mon-report-interval", "5"])
+    ceph_cluster.set_ceph_conf("osd", "osd_mon_report_interval", "5")
 
     # Vstart defaults to two segments, which very easily gets a "behind on trimming" health warning
     # from normal IO latency.  Increase it for running teests.

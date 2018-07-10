@@ -32,15 +32,23 @@ struct mon_rwxa_t {
   }
 };
 
-ostream& operator<<(ostream& out, mon_rwxa_t p);
+ostream& operator<<(ostream& out, const mon_rwxa_t& p);
 
 struct StringConstraint {
+  enum MatchType {
+    MATCH_TYPE_NONE,
+    MATCH_TYPE_EQUAL,
+    MATCH_TYPE_PREFIX,
+    MATCH_TYPE_REGEX
+  };
+
+  MatchType match_type = MATCH_TYPE_NONE;
   string value;
-  string prefix;
 
   StringConstraint() {}
-  StringConstraint(string a, string b)
-    : value(std::move(a)), prefix(std::move(b)) {}
+  StringConstraint(MatchType match_type, string value)
+    : match_type(match_type), value(value) {
+  }
 };
 
 ostream& operator<<(ostream& out, const StringConstraint& c);
@@ -125,7 +133,7 @@ struct MonCap {
   std::vector<MonCapGrant> grants;
 
   MonCap() {}
-  explicit MonCap(std::vector<MonCapGrant> g) : grants(g) {}
+  explicit MonCap(const std::vector<MonCapGrant> &g) : grants(g) {}
 
   string get_str() const {
     return text;
@@ -158,7 +166,7 @@ struct MonCap {
 		  bool op_may_read, bool op_may_write, bool op_may_exec) const;
 
   void encode(bufferlist& bl) const;
-  void decode(bufferlist::iterator& bl);
+  void decode(bufferlist::const_iterator& bl);
   void dump(Formatter *f) const;
   static void generate_test_instances(list<MonCap*>& ls);
 };

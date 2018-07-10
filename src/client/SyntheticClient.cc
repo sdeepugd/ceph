@@ -16,7 +16,6 @@
 
 #include <iostream>
 #include <sstream>
-using namespace std;
 
 
 #include "common/config.h"
@@ -48,7 +47,7 @@ using namespace std;
 //void trace_include(SyntheticClient *syn, Client *cl, string& prefix);
 //void trace_openssh(SyntheticClient *syn, Client *cl, string& prefix);
 
-
+int num_client = 1;
 list<int> syn_modes;
 list<int> syn_iargs;
 list<string> syn_sargs;
@@ -59,6 +58,10 @@ void parse_syn_options(vector<const char*>& args)
   vector<const char*> nargs;
 
   for (unsigned i=0; i<args.size(); i++) {
+    if (strcmp(args[i],"--num-client") == 0) {
+      num_client = atoi(args[++i]);
+      continue;
+    }
     if (strcmp(args[i],"--syn") == 0) {
       ++i;
 
@@ -261,7 +264,7 @@ void parse_syn_options(vector<const char*>& args)
 }
 
 
-SyntheticClient::SyntheticClient(Client *client, int w)
+SyntheticClient::SyntheticClient(StandaloneClient *client, int w)
 {
   this->client = client;
   whoami = w;
@@ -1592,7 +1595,6 @@ int SyntheticClient::full_walk(string& basedir)
   list<frag_info_t> statq;
   dirq.push_back(basedir);
   frag_info_t empty;
-  memset(&empty, 0, sizeof(empty));
   statq.push_back(empty);
 
   ceph::unordered_map<inodeno_t, int> nlink;
@@ -2232,7 +2234,7 @@ public:
 int SyntheticClient::create_objects(int nobj, int osize, int inflight)
 {
   // divy up
-  int numc = client->cct->_conf->num_client ? client->cct->_conf->num_client : 1;
+  int numc = num_client ? num_client : 1;
 
   int start, inc, end;
 
@@ -3243,7 +3245,7 @@ void SyntheticClient::import_find(const char *base, const char *find, bool data)
     if (sp < 0) dirnum++;
 
     //dout(0) << "leading dir " << filename << " " << dirnum << dendl;
-    if (dirnum % client->cct->_conf->num_client != client->get_nodeid()) {
+    if (dirnum % num_client != client->get_nodeid()) {
       dout(20) << "skipping leading dir " << dirnum << " " << filename << dendl;
       continue;
     }
@@ -3354,10 +3356,7 @@ int SyntheticClient::chunk_file(string &filename)
   uint64_t size = st.st_size;
   dout(0) << "file " << filename << " size is " << size << dendl;
 
-  Filer *filer = client->filer;
-
-  inode_t inode;
-  memset(&inode, 0, sizeof(inode));
+  inode_t inode{};
   inode.ino = st.st_ino;
   ret = client->fdescribe_layout(fd, &inode.layout);
   assert(ret == 0); // otherwise fstat did a bad thing
@@ -3365,16 +3364,17 @@ int SyntheticClient::chunk_file(string &filename)
   uint64_t pos = 0;
   bufferlist from_before;
   while (pos < size) {
-    int get = MIN(size-pos, 1048576);
+    int get = std::min<int>(size - pos, 1048576);
 
     Mutex flock("synclient chunk_file lock");
     Cond cond;
     bool done;
     bufferlist bl;
-    
+
     flock.Lock();
     Context *onfinish = new C_SafeCond(&flock, &cond, &done);
-    filer->read(inode.ino, &inode.layout, CEPH_NOSNAP, pos, get, &bl, 0, onfinish);
+    client->filer->read(inode.ino, &inode.layout, CEPH_NOSNAP, pos, get, &bl, 0,
+			onfinish);
     while (!done)
       cond.Wait(flock);
     flock.Unlock();

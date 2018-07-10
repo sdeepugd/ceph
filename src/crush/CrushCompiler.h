@@ -8,8 +8,7 @@
 #include "crush/grammar.h"
 
 #include <map>
-#include <ostream>
-#include <functional>
+#include <iostream>
 
 class CrushCompiler {
   CrushWrapper& crush;
@@ -36,7 +35,7 @@ class CrushCompiler {
 		    ostream &out);
   int decompile_choose_arg_map(crush_choose_arg_map arg_map,
 			       ostream &out);
-  int decompile_choose_args(std::pair<const long unsigned int, crush_choose_arg_map> &i,
+  int decompile_choose_args(const std::pair<const long unsigned int, crush_choose_arg_map> &i,
 			    ostream &out);
   int decompile_bucket_impl(int i, ostream &out);
   int decompile_bucket(int cur,
@@ -54,6 +53,7 @@ class CrushCompiler {
   map<int, unsigned> item_weight;
   map<string, int> type_id;
   map<string, int> rule_id;
+  std::map<int32_t, map<int32_t, int32_t> > class_bucket; // bucket id -> class id -> shadow bucket id
 
   string string_node(node_t &node);
   int int_node(node_t &node); 

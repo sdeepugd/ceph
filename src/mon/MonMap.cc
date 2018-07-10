@@ -20,62 +20,29 @@ using ceph::Formatter;
 
 void mon_info_t::encode(bufferlist& bl, uint64_t features) const
 {
-  ENCODE_START(1, 1, bl);
-  ::encode(name, bl);
-  ::encode(public_addr, bl, features);
+  ENCODE_START(2, 1, bl);
+  encode(name, bl);
+  encode(public_addr, bl, features);
+  encode(priority, bl);
   ENCODE_FINISH(bl);
 }
 
-void mon_info_t::decode(bufferlist::iterator& p)
+void mon_info_t::decode(bufferlist::const_iterator& p)
 {
   DECODE_START(1, p);
-  ::decode(name, p);
-  ::decode(public_addr, p);
+  decode(name, p);
+  decode(public_addr, p);
+  if (struct_v >= 2) {
+    decode(priority, p);
+  }
   DECODE_FINISH(p);
 }
 
 void mon_info_t::print(ostream& out) const
 {
   out << "mon." << name
-      << " public " << public_addr;
-}
-
-void MonMap::sanitize_mons(map<string,entity_addr_t>& o)
-{
-  // if mon_info is populated, it means we decoded a map encoded
-  // by someone who understands the new format (i.e., is able to
-  // encode 'mon_info'). This means they must also have provided
-  // a properly populated 'mon_addr' (which we have dropped with
-  // this patch), 'o' being the contents of said map. In this
-  // case, 'o' must have the same number of entries as 'mon_info'.
-  //
-  // Also, for each entry in 'o', there has to be a matching
-  // 'mon_info' entry, properly populated with a name and a matching
-  // 'public_addr'.
-  //
-  // OTOH, if 'mon_info' is not populated, it means the one that
-  // originally encoded the map does not know the new format, and
-  // 'o' will be our only source of info about the monitors in the
-  // cluster -- and we will use it to populate our 'mon_info' map.
-
-  bool has_mon_info = false;
-  if (mon_info.size() > 0) {
-    assert(o.size() == mon_info.size());
-    has_mon_info = true;
-  }
-
-  for (auto p : o) {
-    if (has_mon_info) {
-      // make sure the info we have is accurate
-      assert(mon_info.count(p.first));
-      assert(mon_info[p.first].name == p.first);
-      assert(mon_info[p.first].public_addr == p.second);
-    } else {
-      mon_info_t &m = mon_info[p.first];
-      m.name = p.first;
-      m.public_addr = p.second;
-    }
-  }
+      << " public " << public_addr
+      << " priority " << priority;
 }
 
 namespace {
@@ -88,10 +55,9 @@ namespace {
   };
 }
 
-void MonMap::calc_ranks() {
-
+void MonMap::calc_legacy_ranks()
+{
   ranks.resize(mon_info.size());
-  addr_mons.clear();
 
   // Used to order entries according to public_addr, because that's
   // how the ranks are expected to be ordered by. We may expand this
@@ -114,10 +80,6 @@ void MonMap::calc_ranks() {
       ++p) {
     mon_info_t &m = p->second;
     tmp.insert(m);
-
-    // populate addr_mons
-    assert(addr_mons.count(m.public_addr) == 0);
-    addr_mons[m.public_addr] = m.name;
   }
 
   // map the set to the actual ranks etc
@@ -131,66 +93,80 @@ void MonMap::calc_ranks() {
 
 void MonMap::encode(bufferlist& blist, uint64_t con_features) const
 {
-  /* we keep the mon_addr map when encoding to ensure compatibility
-   * with clients and other monitors that do not yet support the 'mons'
-   * map. This map keeps its original behavior, containing a mapping of
-   * monitor id (i.e., 'foo' in 'mon.foo') to the monitor's public
-   * address -- which is obtained from the public address of each entry
-   * in the 'mons' map.
-   */
-  map<string,entity_addr_t> mon_addr;
-  for (map<string,mon_info_t>::const_iterator p = mon_info.begin();
-       p != mon_info.end();
-       ++p) {
-    mon_addr[p->first] = p->second.public_addr;
-  }
-
   if ((con_features & CEPH_FEATURE_MONNAMES) == 0) {
+    using ceph::encode;
     __u16 v = 1;
-    ::encode(v, blist);
-    ::encode_raw(fsid, blist);
-    ::encode(epoch, blist);
-    vector<entity_inst_t> mon_inst(mon_addr.size());
-    for (unsigned n = 0; n < mon_addr.size(); n++)
+    encode(v, blist);
+    encode_raw(fsid, blist);
+    encode(epoch, blist);
+    vector<entity_inst_t> mon_inst(ranks.size());
+    for (unsigned n = 0; n < ranks.size(); n++)
       mon_inst[n] = get_inst(n);
-    ::encode(mon_inst, blist, con_features);
-    ::encode(last_changed, blist);
-    ::encode(created, blist);
+    encode(mon_inst, blist, con_features);
+    encode(last_changed, blist);
+    encode(created, blist);
     return;
   }
 
-  if ((con_features & CEPH_FEATURE_MONENC) == 0) {
-    __u16 v = 2;
-    ::encode(v, blist);
-    ::encode_raw(fsid, blist);
-    ::encode(epoch, blist);
-    ::encode(mon_addr, blist, con_features);
-    ::encode(last_changed, blist);
-    ::encode(created, blist);
+  map<string,entity_addr_t> legacy_mon_addr;
+  for (auto& [name, info] : mon_info) {
+    legacy_mon_addr[name] = info.public_addr;
   }
 
-  ENCODE_START(5, 3, blist);
-  ::encode_raw(fsid, blist);
-  ::encode(epoch, blist);
-  ::encode(mon_addr, blist, con_features);
-  ::encode(last_changed, blist);
-  ::encode(created, blist);
-  ::encode(persistent_features, blist);
-  ::encode(optional_features, blist);
-  // this superseeds 'mon_addr'
-  ::encode(mon_info, blist, con_features);
+  if ((con_features & CEPH_FEATURE_MONENC) == 0) {
+    /* we keep the mon_addr map when encoding to ensure compatibility
+       * with clients and other monitors that do not yet support the 'mons'
+       * map. This map keeps its original behavior, containing a mapping of
+       * monitor id (i.e., 'foo' in 'mon.foo') to the monitor's public
+       * address -- which is obtained from the public address of each entry
+       * in the 'mons' map.
+       */
+    using ceph::encode;
+    __u16 v = 2;
+    encode(v, blist);
+    encode_raw(fsid, blist);
+    encode(epoch, blist);
+    encode(legacy_mon_addr, blist, con_features);
+    encode(last_changed, blist);
+    encode(created, blist);
+    return;
+  }
+
+  if (!HAVE_FEATURE(con_features, SERVER_NAUTILUS)) {
+    ENCODE_START(5, 3, blist);
+    encode_raw(fsid, blist);
+    encode(epoch, blist);
+    encode(legacy_mon_addr, blist, con_features);
+    encode(last_changed, blist);
+    encode(created, blist);
+    encode(persistent_features, blist);
+    encode(optional_features, blist);
+    encode(mon_info, blist, con_features);
+    ENCODE_FINISH(blist);
+    return;
+  }
+
+  ENCODE_START(6, 6, blist);
+  encode_raw(fsid, blist);
+  encode(epoch, blist);
+  encode(last_changed, blist);
+  encode(created, blist);
+  encode(persistent_features, blist);
+  encode(optional_features, blist);
+  encode(mon_info, blist, con_features);
+  encode(ranks, blist);
   ENCODE_FINISH(blist);
 }
 
-void MonMap::decode(bufferlist::iterator &p)
+void MonMap::decode(bufferlist::const_iterator& p)
 {
   map<string,entity_addr_t> mon_addr;
-  DECODE_START_LEGACY_COMPAT_LEN_16(5, 3, 3, p);
-  ::decode_raw(fsid, p);
-  ::decode(epoch, p);
+  DECODE_START_LEGACY_COMPAT_LEN_16(6, 3, 3, p);
+  decode_raw(fsid, p);
+  decode(epoch, p);
   if (struct_v == 1) {
     vector<entity_inst_t> mon_inst;
-    ::decode(mon_inst, p);
+    decode(mon_inst, p);
     for (unsigned i = 0; i < mon_inst.size(); i++) {
       char n[2];
       n[0] = '0' + i;
@@ -198,26 +174,32 @@ void MonMap::decode(bufferlist::iterator &p)
       string name = n;
       mon_addr[name] = mon_inst[i].addr;
     }
-  } else {
-    ::decode(mon_addr, p);
+  } else if (struct_v < 6) {
+    decode(mon_addr, p);
   }
-  ::decode(last_changed, p);
-  ::decode(created, p);
+  decode(last_changed, p);
+  decode(created, p);
   if (struct_v >= 4) {
-    ::decode(persistent_features, p);
-    ::decode(optional_features, p);
+    decode(persistent_features, p);
+    decode(optional_features, p);
   }
-  if (struct_v >= 5) {
-    ::decode(mon_info, p);
+  if (struct_v < 5) {
+    // generate mon_info from legacy mon_addr
+    for (auto& [name, addr] : mon_addr) {
+      mon_info_t &m = mon_info[name];
+      m.name = name;
+      m.public_addr = addr;
+    }
   } else {
-    // we may be decoding to an existing monmap; if we do not
-    // clear the mon_info map now, we will likely incur in problems
-    // later on MonMap::sanitize_mons()
-    mon_info.clear();
+    decode(mon_info, p);
   }
+  if (struct_v < 6) {
+    calc_legacy_ranks();
+  } else {
+    decode(ranks, p);
+  }
+  calc_addr_mons();
   DECODE_FINISH(p);
-  sanitize_mons(mon_addr);
-  calc_ranks();
 }
 
 void MonMap::generate_test_instances(list<MonMap*>& o)
@@ -247,7 +229,7 @@ void MonMap::generate_test_instances(list<MonMap*>& o)
     entity_addr_t local_pub_addr;
     local_pub_addr.parse(local_pub_addr_s, &end_p);
 
-    m->add("filled_pub_addr", local_pub_addr);
+    m->add(mon_info_t("filled_pub_addr", local_pub_addr, 1));
 
     m->add("empty_addr_zero", entity_addr_t());
   }
@@ -336,7 +318,7 @@ void MonMap::dump(Formatter *f) const
 }
 
 
-int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
+int MonMap::build_from_host_list(std::string hostlist, const std::string &prefix)
 {
   vector<entity_addr_t> addrs;
   if (parse_ip_port_vec(hostlist.c_str(), addrs)) {
@@ -347,7 +329,7 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
       n[0] = 'a' + i;
       n[1] = 0;
       if (addrs[i].get_port() == 0)
-	addrs[i].set_port(CEPH_MON_PORT);
+	addrs[i].set_port(CEPH_MON_PORT_LEGACY);
       string name = prefix;
       name += n;
       if (!contains(addrs[i]))
@@ -357,8 +339,7 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
   }
 
   // maybe they passed us a DNS-resolvable name
-  char *hosts = NULL;
-  hosts = resolve_addrs(hostlist.c_str());
+  char *hosts = resolve_addrs(hostlist.c_str());
   if (!hosts)
     return -EINVAL;
   bool success = parse_ip_port_vec(hosts, addrs);
@@ -374,13 +355,14 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
     n[0] = 'a' + i;
     n[1] = 0;
     if (addrs[i].get_port() == 0)
-      addrs[i].set_port(CEPH_MON_PORT);
+      addrs[i].set_port(CEPH_MON_PORT_LEGACY);
     string name = prefix;
     name += n;
     if (!contains(addrs[i]) &&
 	!contains(name))
       add(name, addrs[i]);
   }
+  calc_legacy_ranks();
   return 0;
 }
 
@@ -427,6 +409,7 @@ void MonMap::set_initial_members(CephContext *cct,
       assert(contains(*p));
     }
   }
+  calc_legacy_ranks();
 }
 
 
@@ -434,36 +417,40 @@ int MonMap::build_initial(CephContext *cct, ostream& errout)
 {
   const md_config_t *conf = cct->_conf;
   // file?
-  if (!conf->monmap.empty()) {
+  const auto monmap = conf->get_val<std::string>("monmap");
+  if (!monmap.empty()) {
     int r;
     try {
-      r = read(conf->monmap.c_str());
+      r = read(monmap.c_str());
     }
     catch (const buffer::error &e) {
       r = -EINVAL;
     }
     if (r >= 0)
       return 0;
-    errout << "unable to read/decode monmap from " << conf->monmap
+    errout << "unable to read/decode monmap from " << monmap
 	 << ": " << cpp_strerror(-r) << std::endl;
     return r;
   }
 
   // fsid from conf?
-  if (!cct->_conf->fsid.is_zero()) {
-    fsid = cct->_conf->fsid;
+  const auto new_fsid = conf->get_val<uuid_d>("fsid");
+  if (!new_fsid.is_zero()) {
+    fsid = new_fsid;
   }
 
   // -m foo?
-  if (!conf->mon_host.empty()) {
-    int r = build_from_host_list(conf->mon_host, "noname-");
+  const auto mon_host = conf->get_val<std::string>("mon_host");
+  if (!mon_host.empty()) {
+    int r = build_from_host_list(mon_host, "noname-");
     if (r < 0) {
-      errout << "unable to parse addrs in '" << conf->mon_host << "'"
+      errout << "unable to parse addrs in '" << mon_host << "'"
              << std::endl;
       return r;
     }
     created = ceph_clock_now();
     last_changed = created;
+    calc_legacy_ranks();
     return 0;
   }
 
@@ -508,20 +495,30 @@ int MonMap::build_initial(CephContext *cct, ostream& errout)
       continue;
     }
     if (addr.get_port() == 0)
-      addr.set_port(CEPH_MON_PORT);
+      addr.set_port(CEPH_MON_PORT_LEGACY);
 
+    uint16_t priority = 0;
+    if (!conf->get_val_from_conf_file(sections, "mon priority", val, false)) {
+      try {
+        priority = std::stoul(val);
+      } catch (std::logic_error&) {
+        errout << "unable to parse priority for mon." << *m
+               << ": priority='" << val << "'" << std::endl;
+        continue;
+      }
+    }
     // the make sure this mon isn't already in the map
     if (contains(addr))
       remove(get_name(addr));
     if (contains(*m))
       remove(*m);
 
-    add(m->c_str(), addr);
+    add(mon_info_t{*m, addr, priority});
   }
 
   if (size() == 0) {
     // no info found from conf options lets try use DNS SRV records
-    string srv_name = conf->mon_dns_srv_name;
+    string srv_name = conf->get_val<std::string>("mon_dns_srv_name");
     string domain;
     // check if domain is also provided and extract it from srv_name
     size_t idx = srv_name.find("_");
@@ -530,16 +527,18 @@ int MonMap::build_initial(CephContext *cct, ostream& errout)
       srv_name = srv_name.substr(0, idx);
     }
 
-    map<string, entity_addr_t> addrs;
+    map<string, DNSResolver::Record> records;
     if (DNSResolver::get_instance()->resolve_srv_hosts(cct, srv_name,
-        DNSResolver::SRV_Protocol::TCP, domain, &addrs) != 0) {
+        DNSResolver::SRV_Protocol::TCP, domain, &records) != 0) {
 
       errout << "unable to get monitor info from DNS SRV with service name: " << 
 	   "ceph-mon" << std::endl;
     }
     else {
-      for (const auto& addr : addrs) {
-        add(addr.first, addr.second);
+      for (const auto& record : records) {
+        add(mon_info_t{record.first,
+                       record.second.addr,
+                       record.second.priority});
       }
     }
   }
@@ -550,5 +549,6 @@ int MonMap::build_initial(CephContext *cct, ostream& errout)
   }
   created = ceph_clock_now();
   last_changed = created;
+  calc_legacy_ranks();
   return 0;
 }

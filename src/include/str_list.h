@@ -3,9 +3,28 @@
 
 #include <list>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
+#include <boost/utility/string_view.hpp>
+
+
+namespace ceph {
+
+/// Split a string using the given delimiters, passing each piece as a
+/// (non-null-terminated) std::string_view to the callback.
+template <typename Func> // where Func(std::string_view) is a valid call
+void for_each_substr(std::string_view s, const char *delims, Func&& f)
+{
+  auto pos = s.find_first_not_of(delims);
+  while (pos != s.npos) {
+    s.remove_prefix(pos); // trim delims from the front
+    auto end = s.find_first_of(delims);
+    f(s.substr(0, end));
+    pos = s.find_first_not_of(delims, end);
+  }
+}
+
+} // namespace ceph
 
 /**
  * Split **str** into a list of strings, using the ";,= \t" delimiters and output the result in **str_list**.
@@ -26,6 +45,9 @@ extern void get_str_list(const std::string& str,
 extern void get_str_list(const std::string& str,
                          const char *delims,
 			 std::list<std::string>& str_list);
+
+std::list<std::string> get_str_list(const std::string& str,
+                                    const char *delims = ";,= \t");
 
 /**
  * Split **str** into a list of strings, using the ";,= \t" delimiters and output the result in **str_vec**.
@@ -47,6 +69,8 @@ extern void get_str_vec(const std::string& str,
                          const char *delims,
 			 std::vector<std::string>& str_vec);
 
+std::vector<std::string> get_str_vec(const std::string& str,
+                                     const char *delims = ";,= \t");
 /**
  * Split **str** into a list of strings, using the ";,= \t" delimiters and output the result in **str_list**.
  * 
@@ -67,6 +91,9 @@ extern void get_str_set(const std::string& str,
                         const char *delims,
 			std::set<std::string>& str_list);
 
+std::set<std::string> get_str_set(const std::string& str,
+                                  const char *delims = ";,= \t");
+
 /**
  * Return a String containing the vector **v** joined with **sep**
  * 
@@ -78,7 +105,7 @@ extern void get_str_set(const std::string& str,
  * @param [in] sep String used to join each element from **v**
  * @return empty string if **v** is empty or concatenated string
 **/
-inline std::string str_join(const std::vector<std::string>& v, std::string sep)
+inline std::string str_join(const std::vector<std::string>& v, const std::string& sep)
 {
   if (v.empty())
     return std::string();
@@ -89,14 +116,6 @@ inline std::string str_join(const std::vector<std::string>& v, std::string sep)
     r += *i;
   }
   return r;
-}
-
-static inline std::vector<std::string> get_str_vec(const std::string& str)
-{
-  std::vector<std::string> str_vec;
-  const char *delims = ";,= \t";
-  get_str_vec(str, delims, str_vec);
-  return str_vec;
 }
 
 #endif

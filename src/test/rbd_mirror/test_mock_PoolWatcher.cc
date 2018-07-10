@@ -145,6 +145,7 @@ using ::testing::DoAll;
 using ::testing::InSequence;
 using ::testing::Invoke;
 using ::testing::Return;
+using ::testing::ReturnArg;
 using ::testing::StrEq;
 using ::testing::WithArg;
 using ::testing::WithoutArgs;
@@ -157,14 +158,19 @@ public:
   typedef librbd::MockMirroringWatcher MockMirroringWatcher;
   typedef librbd::MirroringWatcher<librbd::MockTestImageCtx> MirroringWatcher;
 
-  struct MockListener : MockPoolWatcher::Listener {
+  struct MockListener : pool_watcher::Listener {
     TestMockPoolWatcher *test;
 
     MockListener(TestMockPoolWatcher *test) : test(test) {
     }
 
-    MOCK_METHOD3(handle_update, void(const std::string &, const ImageIds &,
-                                     const ImageIds &));
+    MOCK_METHOD3(mock_handle_update, void(const std::string &, const ImageIds &,
+                                          const ImageIds &));
+    void handle_update(const std::string &mirror_uuid,
+                       ImageIds &&added_image_ids,
+                       ImageIds &&removed_image_ids) override {
+      mock_handle_update(mirror_uuid, added_image_ids, removed_image_ids);
+    }
   };
 
   TestMockPoolWatcher() : m_lock("TestMockPoolWatcher::m_lock") {
@@ -208,8 +214,8 @@ public:
                                      const std::string &mirror_uuid,
                                      const ImageIds &added_image_ids,
                                      const ImageIds &removed_image_ids) {
-    EXPECT_CALL(mock_listener, handle_update(mirror_uuid, added_image_ids,
-                                             removed_image_ids))
+    EXPECT_CALL(mock_listener, mock_handle_update(mirror_uuid, added_image_ids,
+                                                  removed_image_ids))
       .WillOnce(WithoutArgs(Invoke([this]() {
           Mutex::Locker locker(m_lock);
           ++m_update_count;
@@ -220,12 +226,12 @@ public:
   void expect_mirror_uuid_get(librados::IoCtx &io_ctx,
                               const std::string &uuid, int r) {
     bufferlist out_bl;
-    ::encode(uuid, out_bl);
+    encode(uuid, out_bl);
 
     EXPECT_CALL(get_mock_io_ctx(io_ctx),
                 exec(RBD_MIRRORING, _, StrEq("rbd"), StrEq("mirror_uuid_get"),
                      _, _, _))
-      .WillOnce(DoAll(WithArg<5>(Invoke([this, out_bl](bufferlist *bl) {
+      .WillOnce(DoAll(WithArg<5>(Invoke([out_bl](bufferlist *bl) {
                           *bl = out_bl;
                         })),
                       Return(r)));
@@ -233,13 +239,15 @@ public:
 
   void expect_timer_add_event(MockThreads &mock_threads) {
     EXPECT_CALL(*mock_threads.timer, add_event_after(_, _))
-      .WillOnce(WithArg<1>(Invoke([this](Context *ctx) {
-          auto wrapped_ctx = new FunctionContext([this, ctx](int r) {
-              Mutex::Locker timer_locker(m_threads->timer_lock);
-              ctx->complete(r);
-            });
-          m_threads->work_queue->queue(wrapped_ctx, 0);
-        })));
+      .WillOnce(DoAll(WithArg<1>(Invoke([this](Context *ctx) {
+                        auto wrapped_ctx =
+			  new FunctionContext([this, ctx](int r) {
+			      Mutex::Locker timer_locker(m_threads->timer_lock);
+			      ctx->complete(r);
+			    });
+			m_threads->work_queue->queue(wrapped_ctx, 0);
+                      })),
+                      ReturnArg<1>()));
   }
 
   int when_shut_down(MockPoolWatcher &mock_pool_watcher) {

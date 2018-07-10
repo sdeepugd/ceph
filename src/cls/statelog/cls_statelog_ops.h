@@ -4,7 +4,6 @@
 #ifndef CEPH_CLS_STATELOG_OPS_H
 #define CEPH_CLS_STATELOG_OPS_H
 
-#include "include/types.h"
 #include "cls_statelog_types.h"
 
 struct cls_statelog_add_op {
@@ -14,13 +13,13 @@ struct cls_statelog_add_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(entries, bl);
+    encode(entries, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(entries, bl);
+    decode(entries, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -38,21 +37,21 @@ struct cls_statelog_list_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(object, bl);
-    ::encode(client_id, bl);
-    ::encode(op_id, bl);
-    ::encode(marker, bl);
-    ::encode(max_entries, bl);
+    encode(object, bl);
+    encode(client_id, bl);
+    encode(op_id, bl);
+    encode(marker, bl);
+    encode(max_entries, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(object, bl);
-    ::decode(client_id, bl);
-    ::decode(op_id, bl);
-    ::decode(marker, bl);
-    ::decode(max_entries, bl);
+    decode(object, bl);
+    decode(client_id, bl);
+    decode(op_id, bl);
+    decode(marker, bl);
+    decode(max_entries, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -67,17 +66,17 @@ struct cls_statelog_list_ret {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(entries, bl);
-    ::encode(marker, bl);
-    ::encode(truncated, bl);
+    encode(entries, bl);
+    encode(marker, bl);
+    encode(truncated, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(entries, bl);
-    ::decode(marker, bl);
-    ::decode(truncated, bl);
+    decode(entries, bl);
+    decode(marker, bl);
+    decode(truncated, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -97,17 +96,17 @@ struct cls_statelog_remove_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(client_id, bl);
-    ::encode(op_id, bl);
-    ::encode(object, bl);
+    encode(client_id, bl);
+    encode(op_id, bl);
+    encode(object, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(client_id, bl);
-    ::decode(op_id, bl);
-    ::decode(object, bl);
+    decode(client_id, bl);
+    decode(op_id, bl);
+    decode(object, bl);
     DECODE_FINISH(bl);
   }
 };
@@ -123,19 +122,19 @@ struct cls_statelog_check_state_op {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(client_id, bl);
-    ::encode(op_id, bl);
-    ::encode(object, bl);
-    ::encode(state, bl);
+    encode(client_id, bl);
+    encode(op_id, bl);
+    encode(object, bl);
+    encode(state, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(client_id, bl);
-    ::decode(op_id, bl);
-    ::decode(object, bl);
-    ::decode(state, bl);
+    decode(client_id, bl);
+    decode(op_id, bl);
+    decode(object, bl);
+    decode(state, bl);
     DECODE_FINISH(bl);
   }
 };

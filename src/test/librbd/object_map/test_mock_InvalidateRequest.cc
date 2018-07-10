@@ -5,6 +5,7 @@
 #include "test/librbd/test_support.h"
 #include "test/librados_test_stub/MockTestMemIoCtxImpl.h"
 #include "librbd/internal.h"
+#include "librbd/api/Image.h"
 #include "librbd/object_map/InvalidateRequest.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -26,7 +27,9 @@ TEST_F(TestMockObjectMapInvalidateRequest, UpdatesInMemoryFlag) {
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
-  ASSERT_FALSE(ictx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID));
+  bool flags_set;
+  ASSERT_EQ(0, ictx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID, &flags_set));
+  ASSERT_FALSE(flags_set);
 
   C_SaferCond cond_ctx;
   AsyncRequest<> *request = new InvalidateRequest<>(*ictx, CEPH_NOSNAP, false, &cond_ctx);
@@ -42,7 +45,8 @@ TEST_F(TestMockObjectMapInvalidateRequest, UpdatesInMemoryFlag) {
   }
   ASSERT_EQ(0, cond_ctx.wait());
 
-  ASSERT_TRUE(ictx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID));
+  ASSERT_EQ(0, ictx->test_flags(RBD_FLAG_OBJECT_MAP_INVALID, &flags_set));
+  ASSERT_TRUE(flags_set);
 }
 
 TEST_F(TestMockObjectMapInvalidateRequest, UpdatesHeadOnDiskFlag) {
@@ -76,9 +80,9 @@ TEST_F(TestMockObjectMapInvalidateRequest, UpdatesSnapOnDiskFlag) {
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
 
   ASSERT_EQ(0, snap_create(*ictx, "snap1"));
-  ASSERT_EQ(0, librbd::snap_set(ictx,
-				cls::rbd::UserSnapshotNamespace(),
-				"snap1"));
+  ASSERT_EQ(0, librbd::api::Image<>::snap_set(ictx,
+				              cls::rbd::UserSnapshotNamespace(),
+				              "snap1"));
 
   C_SaferCond cond_ctx;
   AsyncRequest<> *request = new InvalidateRequest<>(*ictx, ictx->snap_id, false,

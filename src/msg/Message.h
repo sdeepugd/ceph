@@ -25,7 +25,8 @@
 
 #include "include/types.h"
 #include "include/buffer.h"
-#include "common/Throttle.h"
+#include "common/ThrottleInterface.h"
+#include "common/zipkin_trace.h"
 #include "msg_types.h"
 
 #include "common/RefCountedObj.h"
@@ -58,6 +59,9 @@
 
 #define MSG_PAXOS                  40
 
+#define MSG_CONFIG           62
+#define MSG_GET_CONFIG       63
+
 
 // osd internal
 #define MSG_OSD_PING         70
@@ -67,8 +71,9 @@
 #define MSG_OSD_MARK_ME_DOWN 74
 #define MSG_OSD_FULL         75
 
-#define MSG_OSD_SUBOP        76
-#define MSG_OSD_SUBOPREPLY   77
+// removed right after luminous
+//#define MSG_OSD_SUBOP        76
+//#define MSG_OSD_SUBOPREPLY   77
 
 #define MSG_OSD_PGTEMP       78
 
@@ -100,6 +105,7 @@
 
 #define MSG_OSD_BACKFILL_RESERVE 99
 #define MSG_OSD_RECOVERY_RESERVE 150
+#define MSG_OSD_FORCE_RECOVERY 151
 
 #define MSG_OSD_PG_PUSH        105
 #define MSG_OSD_PG_PULL        106
@@ -117,6 +123,11 @@
 
 #define MSG_OSD_PG_CREATED      116
 #define MSG_OSD_REP_SCRUBMAP    117
+#define MSG_OSD_PG_RECOVERY_DELETE 118
+#define MSG_OSD_PG_RECOVERY_DELETE_REPLY 119
+#define MSG_OSD_PG_CREATE2      120
+#define MSG_OSD_SCRUB2          121
+
 
 // *** MDS ***
 
@@ -142,7 +153,7 @@
 #define MSG_MDS_FINDINOREPLY       0x20e
 #define MSG_MDS_OPENINO            0x20f
 #define MSG_MDS_OPENINOREPLY       0x210
-
+#define MSG_MDS_SNAPUPDATE         0x211
 #define MSG_MDS_LOCK               0x300
 #define MSG_MDS_INODEFILECAPS      0x301
 
@@ -182,6 +193,9 @@
 // Special
 #define MSG_NOP                   0x607
 
+#define MSG_MON_HEALTH_CHECKS     0x608
+#define MSG_TIMECHECK2            0x609
+
 // *** ceph-mgr <-> OSD/MDS daemons ***
 #define MSG_MGR_OPEN              0x700
 #define MSG_MGR_CONFIGURE         0x701
@@ -195,6 +209,11 @@
 
 // *** ceph-mon(MgrMonitor) -> ceph-mgr
 #define MSG_MGR_DIGEST               0x705
+// *** cephmgr -> ceph-mon
+#define MSG_MON_MGR_REPORT        0x706
+#define MSG_SERVICE_MAP           0x707
+
+#define MSG_MGR_CLOSE             0x708
 
 // ======================================================
 
@@ -240,6 +259,11 @@ protected:
   bi::list_member_hook<> dispatch_q;
 
 public:
+  // zipkin tracing
+  ZTracer::Trace trace;
+  void encode_trace(bufferlist &bl, uint64_t features) const;
+  void decode_trace(bufferlist::const_iterator &p, bool create = false);
+
   class CompletionHook : public Context {
   protected:
     Message *m;
@@ -259,10 +283,10 @@ protected:
 
   // release our size in bytes back to this throttler when our payload
   // is adjusted or when we are destroyed.
-  Throttle *byte_throttler = nullptr;
+  ThrottleInterface *byte_throttler = nullptr;
 
   // release a count back to this throttler when we are destroyed
-  Throttle *msg_throttler = nullptr;
+  ThrottleInterface *msg_throttler = nullptr;
 
   // keep track of how big this message was when we reserved space in
   // the msgr dispatch_throttler, so that we can properly release it
@@ -297,6 +321,7 @@ protected:
     if (byte_throttler)
       byte_throttler->put(payload.length() + middle.length() + data.length());
     release_message_throttle();
+    trace.event("message destructed");
     /* call completion hooks (if any) */
     if (completion_hook)
       completion_hook->complete(0);
@@ -308,10 +333,12 @@ public:
   }
   CompletionHook* get_completion_hook() { return completion_hook; }
   void set_completion_hook(CompletionHook *hook) { completion_hook = hook; }
-  void set_byte_throttler(Throttle *t) { byte_throttler = t; }
-  Throttle *get_byte_throttler() { return byte_throttler; }
-  void set_message_throttler(Throttle *t) { msg_throttler = t; }
-  Throttle *get_message_throttler() { return msg_throttler; }
+  void set_byte_throttler(ThrottleInterface *t) {
+    byte_throttler = t;
+  }
+  void set_message_throttler(ThrottleInterface *t) {
+    msg_throttler = t;
+  }
 
   void set_dispatch_throttle_size(uint64_t s) { dispatch_throttle_size = s; }
   uint64_t get_dispatch_throttle_size() const { return dispatch_throttle_size; }
@@ -442,6 +469,11 @@ public:
       return connection->get_peer_addr();
     return entity_addr_t();
   }
+  entity_addrvec_t get_source_addrs() const {
+    if (connection)
+      return connection->get_peer_addrs();
+    return entity_addrvec_t();
+  }
 
   // forwarded?
   entity_inst_t get_orig_source_inst() const {
@@ -452,6 +484,9 @@ public:
   }
   entity_addr_t get_orig_source_addr() const {
     return get_source_addr();
+  }
+  entity_addrvec_t get_orig_source_addrs() const {
+    return get_source_addrs();
   }
 
   // virtual bits
@@ -471,8 +506,9 @@ typedef boost::intrusive_ptr<Message> MessageRef;
 extern Message *decode_message(CephContext *cct, int crcflags,
 			       ceph_msg_header &header,
 			       ceph_msg_footer& footer, bufferlist& front,
-			       bufferlist& middle, bufferlist& data);
-inline ostream& operator<<(ostream &out, const Message &m) {
+			       bufferlist& middle, bufferlist& data,
+			       Connection* conn);
+inline ostream& operator<<(ostream& out, const Message& m) {
   m.print(out);
   if (m.get_header().version)
     out << " v" << m.get_header().version;
@@ -481,6 +517,6 @@ inline ostream& operator<<(ostream &out, const Message &m) {
 
 extern void encode_message(Message *m, uint64_t features, bufferlist& bl);
 extern Message *decode_message(CephContext *cct, int crcflags,
-                               bufferlist::iterator& bl);
+                               bufferlist::const_iterator& bl);
 
 #endif

@@ -103,7 +103,7 @@ void DemoteRequest<I>::allocate_tag() {
   tag_data.predecessor = std::move(predecessor);
 
   bufferlist tag_bl;
-  ::encode(tag_data, tag_bl);
+  encode(tag_data, tag_bl);
 
   auto ctx = create_context_callback<
     DemoteRequest<I>, &DemoteRequest<I>::handle_allocate_tag>(this);
@@ -131,9 +131,9 @@ void DemoteRequest<I>::append_event() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  EventEntry event_entry{DemoteEvent{}, ceph_clock_now()};
+  EventEntry event_entry{DemotePromoteEvent{}, {}};
   bufferlist event_entry_bl;
-  ::encode(event_entry, event_entry_bl);
+  encode(event_entry, event_entry_bl);
 
   m_journaler->start_append(0, 0, 0);
   m_future = m_journaler->append(m_tag_tid, event_entry_bl);

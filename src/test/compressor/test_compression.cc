@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include "gtest/gtest.h"
+#include "common/ceph_context.h"
 #include "common/config.h"
 #include "compressor/Compressor.h"
 #include "compressor/CompressionPlugin.h"
@@ -106,7 +107,7 @@ TEST_P(CompressorTest, big_round_trip_repeated)
 
 TEST_P(CompressorTest, big_round_trip_randomish)
 {
-  unsigned len = 1048576 * 100;//269;
+  unsigned len = 1048576 * 10;//269;
   bufferlist orig;
   const char *alphabet = "abcdefghijklmnopqrstuvwxyz";
   if (false) {
@@ -174,7 +175,7 @@ TEST_P(CompressorTest, compress_decompress)
   after.clear();
   size_t compressed_len = out.length();
   out.append_zero(12);
-  auto it = out.begin();
+  auto it = out.cbegin();
   res = compressor->decompress(it, compressed_len, after);
   EXPECT_EQ(res, 0);
   EXPECT_TRUE(exp.contents_equal(after));
@@ -197,8 +198,9 @@ TEST_P(CompressorTest, compress_decompress)
   bufferlist prefix;
   prefix.append(string("some prefix"));
   size_t prefix_len = prefix.length();
-  out.claim_prepend(prefix);
-  it = out.begin();
+  prefix.claim_append(out);
+  out.swap(prefix);
+  it = out.cbegin();
   it.advance(prefix_len);
   res = compressor->decompress(it, compressed_len, after);
   EXPECT_EQ(res, 0);
@@ -223,7 +225,7 @@ TEST_P(CompressorTest, sharded_input_decompress)
   size_t left = out.length()-small_prefix_size;
   size_t offs = small_prefix_size;
   while( left > 0 ){
-    size_t shard_size = MIN( 2048, left );
+    size_t shard_size = std::min<size_t>(2048, left);
     tmp.substr_of(out, offs, shard_size );
     out2.append( tmp );
     left -= shard_size;
@@ -243,11 +245,12 @@ void test_compress(CompressorRef compressor, size_t size)
   }
   bufferlist in;
   in.append(data, size);
-  for (size_t t = 0; t < 100000; t++) {
+  for (size_t t = 0; t < 10000; t++) {
     bufferlist out;
     int res = compressor->compress(in, out);
     EXPECT_EQ(res, 0);
   }
+  free(data);
 }
 
 void test_decompress(CompressorRef compressor, size_t size)
@@ -260,11 +263,12 @@ void test_decompress(CompressorRef compressor, size_t size)
   in.append(data, size);
   int res = compressor->compress(in, out);
   EXPECT_EQ(res, 0);
-  for (size_t t = 0; t < 100000; t++) {
+  for (size_t t = 0; t < 10000; t++) {
     bufferlist out_dec;
     int res = compressor->decompress(out, out_dec);
     EXPECT_EQ(res, 0);
   }
+  free(data);
 }
 
 TEST_P(CompressorTest, compress_1024)
@@ -322,16 +326,30 @@ INSTANTIATE_TEST_CASE_P(
   Compressor,
   CompressorTest,
   ::testing::Values(
+#ifdef HAVE_LZ4
+    "lz4",
+#endif
+#ifdef __x86_64__
     "zlib/isal",
+#endif
     "zlib/noisal",
     "snappy",
+#ifdef HAVE_BROTLI
+    "brotli",
+#endif
     "zstd"));
+
+#ifdef __x86_64__
 
 TEST(ZlibCompressor, zlib_isal_compatibility)
 {
   g_conf->set_val("compressor_zlib_isal", "true");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef isal = Compressor::create(g_ceph_context, "zlib");
+  if (!isal) {
+    // skip the test if the plugin is not ready
+    return;
+  }
   g_conf->set_val("compressor_zlib_isal", "false");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef zlib = Compressor::create(g_ceph_context, "zlib");
@@ -350,7 +368,7 @@ TEST(ZlibCompressor, zlib_isal_compatibility)
   res = zlib->decompress(out, after);
   EXPECT_EQ(res, 0);
   bufferlist exp;
-  exp.append(test);
+  exp.append(static_cast<char*>(test));
   EXPECT_TRUE(exp.contents_equal(after));
   after.clear();
   out.clear();
@@ -360,21 +378,20 @@ TEST(ZlibCompressor, zlib_isal_compatibility)
   EXPECT_EQ(res, 0);
   res = isal->decompress(out, after);
   EXPECT_EQ(res, 0);
-  exp.append(test);
+  exp.append(static_cast<char*>(test));
   EXPECT_TRUE(exp.contents_equal(after));
 }
+#endif
 
 TEST(CompressionPlugin, all)
 {
-  const char* env = getenv("CEPH_LIB");
-  std::string directory(env ? env : ".libs");
   CompressorRef compressor;
   PluginRegistry *reg = g_ceph_context->get_plugin_registry();
   EXPECT_TRUE(reg);
   CompressionPlugin *factory = dynamic_cast<CompressionPlugin*>(reg->get_with_load("compressor", "invalid"));
   EXPECT_FALSE(factory);
   factory = dynamic_cast<CompressionPlugin*>(reg->get_with_load("compressor", "example"));
-  EXPECT_TRUE(factory);
+  ASSERT_TRUE(factory);
   stringstream ss;
   EXPECT_EQ(0, factory->factory(&compressor, &ss));
   EXPECT_TRUE(compressor.get());
@@ -386,16 +403,22 @@ TEST(CompressionPlugin, all)
   }
 }
 
+#ifdef __x86_64__
+
 TEST(ZlibCompressor, isal_compress_zlib_decompress_random)
 {
   g_conf->set_val("compressor_zlib_isal", "true");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef isal = Compressor::create(g_ceph_context, "zlib");
+  if (!isal) {
+    // skip the test if the plugin is not ready
+    return;
+  }
   g_conf->set_val("compressor_zlib_isal", "false");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef zlib = Compressor::create(g_ceph_context, "zlib");
 
-  for (int cnt=0; cnt<1000; cnt++)
+  for (int cnt=0; cnt<100; cnt++)
   {
     srand(cnt + 1000);
     int log2 = (rand()%18) + 1;
@@ -423,11 +446,15 @@ TEST(ZlibCompressor, isal_compress_zlib_decompress_walk)
   g_conf->set_val("compressor_zlib_isal", "true");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef isal = Compressor::create(g_ceph_context, "zlib");
+  if (!isal) {
+    // skip the test if the plugin is not ready
+    return;
+  }
   g_conf->set_val("compressor_zlib_isal", "false");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef zlib = Compressor::create(g_ceph_context, "zlib");
 
-  for (int cnt=0; cnt<1000; cnt++)
+  for (int cnt=0; cnt<100; cnt++)
   {
     srand(cnt + 1000);
     int log2 = (rand()%18) + 1;
@@ -452,3 +479,80 @@ TEST(ZlibCompressor, isal_compress_zlib_decompress_walk)
     EXPECT_TRUE(exp.contents_equal(after));
   }
 }
+
+#endif	// __x86_64__
+
+#ifdef HAVE_QATZIP
+TEST(QAT, enc_qat_dec_noqat) {
+#ifdef HAVE_LZ4
+  const char* alg_collection[] = {"zlib", "lz4", "snappy"}; 
+#else
+  const char* alg_collection[] = {"zlib", "snappy"}; 
+#endif
+  for (auto alg : alg_collection) {
+    g_conf->set_val("qat_compressor_enabled", "true");
+    CompressorRef q = Compressor::create(g_ceph_context, alg);
+    g_conf->set_val("qat_compressor_enabled", "false");
+    CompressorRef noq = Compressor::create(g_ceph_context, alg);
+
+    // generate random buffer
+    for (int cnt=0; cnt<100; cnt++) {
+      srand(cnt + 1000);
+      int log2 = (rand()%18) + 1;
+      int size = (rand() % (1 << log2)) + 1;
+  
+      char test[size];
+      for (int i=0; i<size; ++i)
+        test[i] = rand()%256;
+      bufferlist in, out;
+      in.append(test, size);
+  
+      int res = q->compress(in, out);
+      EXPECT_EQ(res, 0);
+      bufferlist after;
+      res = noq->decompress(out, after);
+      EXPECT_EQ(res, 0);
+      bufferlist exp;
+      exp.append(test, size);
+      EXPECT_TRUE(exp.contents_equal(after));
+    }
+  }
+}
+
+TEST(QAT, enc_noqat_dec_qat) {
+#ifdef HAVE_LZ4
+  const char* alg_collection[] = {"zlib", "lz4", "snappy"}; 
+#else
+  const char* alg_collection[] = {"zlib", "snappy"}; 
+#endif
+  for (auto alg : alg_collection) {
+    g_conf->set_val("qat_compressor_enabled", "true");
+    CompressorRef q = Compressor::create(g_ceph_context, alg);
+    g_conf->set_val("qat_compressor_enabled", "false");
+    CompressorRef noq = Compressor::create(g_ceph_context, alg);
+
+    // generate random buffer
+    for (int cnt=0; cnt<100; cnt++) {
+      srand(cnt + 1000);
+      int log2 = (rand()%18) + 1;
+      int size = (rand() % (1 << log2)) + 1;
+  
+      char test[size];
+      for (int i=0; i<size; ++i)
+        test[i] = rand()%256;
+      bufferlist in, out;
+      in.append(test, size);
+  
+      int res = noq->compress(in, out);
+      EXPECT_EQ(res, 0);
+      bufferlist after;
+      res = q->decompress(out, after);
+      EXPECT_EQ(res, 0);
+      bufferlist exp;
+      exp.append(test, size);
+      EXPECT_TRUE(exp.contents_equal(after));
+    }
+  }
+}
+
+#endif	// HAVE_QATZIP

@@ -22,14 +22,14 @@
 
 class RGWFrontendConfig {
   std::string config;
-  std::map<std::string, std::string> config_map;
+  std::multimap<std::string, std::string> config_map;
   std::string framework;
 
   int parse_config(const std::string& config,
-                   std::map<std::string, std::string>& config_map);
+                   std::multimap<std::string, std::string>& config_map);
 
 public:
-  RGWFrontendConfig(const std::string& config)
+  explicit RGWFrontendConfig(const std::string& config)
     : config(config) {
   }
 
@@ -50,7 +50,11 @@ public:
     return out;
   }
 
-  std::map<std::string, std::string>& get_config_map() {
+  const std::string& get_config() {
+    return config;
+  }
+
+  std::multimap<std::string, std::string>& get_config_map() {
     return config_map;
   }
 
@@ -81,7 +85,7 @@ struct RGWMongooseEnv : public RGWProcessEnv {
   static constexpr bool prioritize_write = true;
   RWLock mutex;
 
-  RGWMongooseEnv(const RGWProcessEnv &env)
+  explicit RGWMongooseEnv(const RGWProcessEnv &env)
     : RGWProcessEnv(env),
       mutex("RGWCivetWebFrontend", false, true, prioritize_write) {
   }
@@ -93,11 +97,11 @@ class RGWCivetWebFrontend : public RGWFrontend {
   struct mg_context* ctx;
   RGWMongooseEnv env;
 
-  void set_conf_default(std::map<std::string, std::string>& m,
+  void set_conf_default(std::multimap<std::string, std::string>& m,
                         const std::string& key,
 			const std::string& def_val) {
     if (m.find(key) == std::end(m)) {
-      m[key] = def_val;
+      m.emplace(key, def_val);
     }
   }
 
@@ -213,7 +217,7 @@ public:
     if (uid_str.empty()) {
       derr << "ERROR: uid param must be specified for loadgen frontend"
 	   << dendl;
-      return EINVAL;
+      return -EINVAL;
     }
 
     rgw_user uid(uid_str);

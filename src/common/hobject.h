@@ -15,13 +15,13 @@
 #ifndef __CEPH_OS_HOBJECT_H
 #define __CEPH_OS_HOBJECT_H
 
-#include <string.h>
 #include "include/types.h"
-#include "include/object.h"
 #include "include/cmp.h"
 
 #include "json_spirit/json_spirit_value.h"
 #include "include/assert.h"   // spirit clobbers it!
+
+#include "reverse.h"
 
 namespace ceph {
   class Formatter;
@@ -199,27 +199,10 @@ public:
   }
 
   static uint32_t _reverse_bits(uint32_t v) {
-    if (v == 0)
-      return v;
-    // reverse bits
-    // swap odd and even bits
-    v = ((v >> 1) & 0x55555555) | ((v & 0x55555555) << 1);
-    // swap consecutive pairs
-    v = ((v >> 2) & 0x33333333) | ((v & 0x33333333) << 2);
-    // swap nibbles ...
-    v = ((v >> 4) & 0x0F0F0F0F) | ((v & 0x0F0F0F0F) << 4);
-    // swap bytes
-    v = ((v >> 8) & 0x00FF00FF) | ((v & 0x00FF00FF) << 8);
-    // swap 2-byte long pairs
-    v = ( v >> 16             ) | ( v               << 16);
-    return v;
+    return reverse_bits(v);
   }
   static uint32_t _reverse_nibbles(uint32_t retval) {
-    // reverse nibbles
-    retval = ((retval & 0x0f0f0f0f) << 4) | ((retval & 0xf0f0f0f0) >> 4);
-    retval = ((retval & 0x00ff00ff) << 8) | ((retval & 0xff00ff00) >> 8);
-    retval = ((retval & 0x0000ffff) << 16) | ((retval & 0xffff0000) >> 16);
-    return retval;
+    return reverse_nibbles(retval);
   }
 
   /**
@@ -291,7 +274,7 @@ public:
   bool parse(const string& s);
 
   void encode(bufferlist& bl) const;
-  void decode(bufferlist::iterator& bl);
+  void decode(bufferlist::const_iterator& bl);
   void decode(json_spirit::Value& v);
   void dump(Formatter *f) const;
   static void generate_test_instances(list<hobject_t*>& o);
@@ -317,8 +300,8 @@ WRITE_CLASS_ENCODER(hobject_t)
 namespace std {
   template<> struct hash<hobject_t> {
     size_t operator()(const hobject_t &r) const {
-      static rjhash<uint64_t> I;
-      return r.get_hash() ^ I(r.snap);
+      static rjhash<uint64_t> RJ;
+      return RJ(r.get_hash() ^ r.snap);
     }
   };
 } // namespace std
@@ -463,7 +446,7 @@ public:
   }
 
   void encode(bufferlist& bl) const;
-  void decode(bufferlist::iterator& bl);
+  void decode(bufferlist::const_iterator& bl);
   void decode(json_spirit::Value& v);
   size_t encoded_size() const;
   void dump(Formatter *f) const;
@@ -490,8 +473,12 @@ WRITE_CLASS_ENCODER(ghobject_t)
 namespace std {
   template<> struct hash<ghobject_t> {
     size_t operator()(const ghobject_t &r) const {
-      static rjhash<uint64_t> I;
-      return r.hobj.get_hash() ^ I(r.hobj.snap);
+      static rjhash<uint64_t> RJ;
+      static hash<hobject_t> HO;
+      size_t hash = HO(r.hobj);
+      hash = RJ(hash ^ r.generation);
+      hash = hash ^ r.shard_id.id;
+      return hash;
     }
   };
 } // namespace std

@@ -35,6 +35,7 @@ enum {
   l_bluefs_files_written_sst,
   l_bluefs_bytes_written_wal,
   l_bluefs_bytes_written_sst,
+  l_bluefs_bytes_written_slow,
   l_bluefs_last,
 };
 
@@ -126,6 +127,7 @@ public:
 
     std::mutex lock;
     std::array<IOContext*,MAX_BDEV> iocv; ///< for each bdev
+    std::array<bool, MAX_BDEV> dirty_devs;
 
     FileWriter(FileRef f)
       : file(f),
@@ -134,6 +136,7 @@ public:
 			  g_conf->bluefs_alloc_size / CEPH_PAGE_SIZE)) {
       ++file->num_writers;
       iocv.fill(nullptr);
+      dirty_devs.fill(false);
     }
     // NOTE: caller must call BlueFS::close_writer()
     ~FileWriter() {
@@ -251,9 +254,10 @@ private:
   vector<BlockDevice*> bdev;                  ///< block devices we can use
   vector<IOContext*> ioc;                     ///< IOContexts for bdevs
   vector<interval_set<uint64_t> > block_all;  ///< extents in bdev we own
-  vector<uint64_t> block_total;               ///< sum of block_all
   vector<Allocator*> alloc;                   ///< allocators for bdevs
   vector<interval_set<uint64_t>> pending_release; ///< extents to release
+
+  BlockDevice::aio_callback_t discard_cb[3]; //discard callbacks for each dev
 
   void _init_logger();
   void _shutdown_logger();
@@ -268,13 +272,15 @@ private:
   void _drop_link(FileRef f);
 
   int _allocate(uint8_t bdev, uint64_t len,
-		mempool::bluefs::vector<bluefs_extent_t> *ev);
+		bluefs_fnode_t* node);
   int _flush_range(FileWriter *h, uint64_t offset, uint64_t length);
   int _flush(FileWriter *h, bool force);
   int _fsync(FileWriter *h, std::unique_lock<std::mutex>& l);
 
-  void _claim_completed_aios(FileWriter *h, list<FS::aio_t> *ls);
+#ifdef HAVE_LIBAIO
+  void _claim_completed_aios(FileWriter *h, list<aio_t> *ls);
   void wait_for_aio(FileWriter *h);  // safe to call without a lock
+#endif
 
   int _flush_and_sync_log(std::unique_lock<std::mutex>& l,
 			  uint64_t want_seq = 0,
@@ -287,7 +293,9 @@ private:
 
   //void _aio_finish(void *priv);
 
+  void _flush_bdev_safely(FileWriter *h);
   void flush_bdev();  // this is safe to call without a lock
+  void flush_bdev(std::array<bool, MAX_BDEV>& dirty_bdevs);  // this is safe to call without a lock
 
   int _preallocate(FileRef f, uint64_t off, uint64_t len);
   int _truncate(FileWriter *h, uint64_t off);
@@ -309,7 +317,7 @@ private:
 
   int _open_super();
   int _write_super();
-  int _replay(bool noop); ///< replay journal
+  int _replay(bool noop, bool to_stdout = false); ///< replay journal
 
   FileWriter *_create_writer(FileRef f);
   void _close_writer(FileWriter *h);
@@ -331,8 +339,14 @@ public:
   int mkfs(uuid_d osd_uuid);
   int mount();
   void umount();
+  
+  int log_dump(
+    CephContext *cct,
+    const string& path,
+    const vector<string>& devs);
 
-  void collect_metadata(map<string,string> *pm);
+  void collect_metadata(map<string,string> *pm, unsigned skip_bdev_id);
+  void get_devices(set<string> *ls);
   int fsck();
 
   uint64_t get_fs_usage();
@@ -340,6 +354,8 @@ public:
   uint64_t get_free(unsigned id);
   void get_usage(vector<pair<uint64_t,uint64_t>> *usage); // [<free,total> ...]
   void dump_perf_counters(Formatter *f);
+
+  void dump_block_extents(ostream& out);
 
   /// get current extents that we own for given block device
   int get_block_extents(unsigned id, interval_set<uint64_t> *extents);
@@ -369,6 +385,7 @@ public:
   int unlink(const string& dirname, const string& filename);
   int mkdir(const string& dirname);
   int rmdir(const string& dirname);
+  bool wal_is_rotational();
 
   bool dir_exists(const string& dirname);
   int stat(const string& dirname, const string& filename,
@@ -383,7 +400,7 @@ public:
   /// sync any uncommitted state to disk
   void sync_metadata();
 
-  int add_block_device(unsigned bdev, string path);
+  int add_block_device(unsigned bdev, const string& path, bool trim);
   bool bdev_support_label(unsigned id);
   uint64_t get_block_device_size(unsigned bdev);
 
@@ -392,7 +409,10 @@ public:
 
   /// reclaim block space
   int reclaim_blocks(unsigned bdev, uint64_t want,
-		     AllocExtentVector *extents);
+		     PExtentVector *extents);
+
+  // handler for discard event
+  void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);
 
   void flush(FileWriter *h) {
     std::lock_guard<std::mutex> l(lock);

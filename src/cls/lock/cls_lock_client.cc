@@ -15,16 +15,10 @@
 #include "include/types.h"
 #include "msg/msg_types.h"
 #include "include/rados/librados.hpp"
-
+#include "include/utime.h"
+ 
 using namespace librados;
 
-#include <iostream>
-
-#include <errno.h>
-#include <stdlib.h>
-#include <time.h>
-
-#include "cls/lock/cls_lock_types.h"
 #include "cls/lock/cls_lock_ops.h"
 #include "cls/lock/cls_lock_client.h"
 
@@ -47,7 +41,7 @@ namespace rados {
         op.duration = duration;
         op.flags = flags;
         bufferlist in;
-        ::encode(op, in);
+        encode(op, in);
         rados_op->exec("lock", "lock", in);
       }
 
@@ -70,7 +64,7 @@ namespace rados {
         op.name = name;
         op.cookie = cookie;
         bufferlist in;
-        ::encode(op, in);
+        encode(op, in);
 
         rados_op->exec("lock", "unlock", in);
       }
@@ -101,7 +95,7 @@ namespace rados {
         op.cookie = cookie;
         op.locker = locker;
         bufferlist in;
-        ::encode(op, in);
+        encode(op, in);
         rados_op->exec("lock", "break_lock", in);
       }
 
@@ -122,9 +116,9 @@ namespace rados {
           return r;
 
         cls_lock_list_locks_reply ret;
-        bufferlist::iterator iter = out.begin();
+        auto iter = cbegin(out);
         try {
-          ::decode(ret, iter);
+          decode(ret, iter);
         } catch (buffer::error& err) {
 	  return -EBADMSG;
         }
@@ -140,17 +134,17 @@ namespace rados {
         bufferlist in;
         cls_lock_get_info_op op;
         op.name = name;
-        ::encode(op, in);
+        encode(op, in);
         rados_op->exec("lock", "get_info", in);
       }
 
-      int get_lock_info_finish(bufferlist::iterator *iter,
+      int get_lock_info_finish(bufferlist::const_iterator *iter,
 			       map<locker_id_t, locker_info_t> *lockers,
 			       ClsLockType *type, string *tag)
       {
         cls_lock_get_info_reply ret;
         try {
-          ::decode(ret, *iter);
+          decode(ret, *iter);
         } catch (buffer::error& err) {
 	  return -EBADMSG;
         }
@@ -180,7 +174,7 @@ namespace rados {
         int r = ioctx->operate(oid, &op, &out);
 	if (r < 0)
 	  return r;
-	bufferlist::iterator it = out.begin();
+	auto it = std::cbegin(out);
 	return get_lock_info_finish(&it, lockers, type, tag);
       }
 
@@ -194,7 +188,7 @@ namespace rados {
         op.cookie = cookie;
         op.tag = tag;
         bufferlist in;
-        ::encode(op, in);
+        encode(op, in);
         rados_op->exec("lock", "assert_locked", in);
       }
 
@@ -210,7 +204,7 @@ namespace rados {
         op.tag = tag;
         op.new_cookie = new_cookie;
         bufferlist in;
-        ::encode(op, in);
+        encode(op, in);
         rados_op->exec("lock", "set_cookie", in);
       }
 

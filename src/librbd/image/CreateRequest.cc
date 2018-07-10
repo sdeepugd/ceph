@@ -8,6 +8,7 @@
 #include "include/assert.h"
 #include "librbd/Utils.h"
 #include "common/ceph_context.h"
+#include "osdc/Striper.h"
 #include "librbd/Journal.h"
 #include "librbd/MirroringWatcher.h"
 #include "librbd/journal/CreateRequest.h"
@@ -35,6 +36,10 @@ int validate_features(CephContext *cct, uint64_t features,
     lderr(cct) << "librbd does not support requested features." << dendl;
     return -ENOSYS;
   }
+  if ((features & RBD_FEATURES_INTERNAL) != 0) {
+    lderr(cct) << "cannot use internally controlled features" << dendl;
+    return -EINVAL;
+  }
   if ((features & RBD_FEATURE_FAST_DIFF) != 0 &&
       (features & RBD_FEATURE_OBJECT_MAP) == 0) {
     lderr(cct) << "cannot use fast diff without object map" << dendl;
@@ -51,7 +56,7 @@ int validate_features(CephContext *cct, uint64_t features,
       return -EINVAL;
     }
   } else if (force_non_primary) {
-    assert(false);
+    ceph_abort();
   }
 
   return 0;
@@ -135,12 +140,14 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
                                 const std::string &primary_mirror_uuid,
                                 bool skip_mirror_enable,
                                 ContextWQ *op_work_queue, Context *on_finish)
-  : m_ioctx(ioctx), m_image_name(image_name), m_image_id(image_id),
+  : m_image_name(image_name), m_image_id(image_id),
     m_size(size), m_non_primary_global_image_id(non_primary_global_image_id),
     m_primary_mirror_uuid(primary_mirror_uuid),
     m_skip_mirror_enable(skip_mirror_enable),
     m_op_work_queue(op_work_queue), m_on_finish(on_finish) {
-  m_cct = reinterpret_cast<CephContext *>(m_ioctx.cct());
+
+  m_io_ctx.dup(ioctx);
+  m_cct = reinterpret_cast<CephContext *>(m_io_ctx.cct());
 
   m_id_obj = util::id_obj_name(m_image_name);
   m_header_obj = util::header_name(m_image_id);
@@ -162,31 +169,35 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
   m_features |= features_set;
   m_features &= ~features_clear;
 
+  if ((m_features & RBD_FEATURE_OBJECT_MAP) == RBD_FEATURE_OBJECT_MAP) {
+      m_features |= RBD_FEATURE_FAST_DIFF;
+  }
+
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_UNIT, &m_stripe_unit) != 0 ||
       m_stripe_unit == 0) {
-    m_stripe_unit = m_cct->_conf->rbd_default_stripe_unit;
+    m_stripe_unit = m_cct->_conf->get_val<uint64_t>("rbd_default_stripe_unit");
   }
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_COUNT, &m_stripe_count) != 0 ||
       m_stripe_count == 0) {
-    m_stripe_count = m_cct->_conf->rbd_default_stripe_count;
+    m_stripe_count = m_cct->_conf->get_val<uint64_t>("rbd_default_stripe_count");
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_ORDER, &m_order) != 0 ||
       m_order == 0) {
-    m_order = m_cct->_conf->rbd_default_order;
+    m_order = m_cct->_conf->get_val<int64_t>("rbd_default_order");
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_JOURNAL_ORDER,
       &m_journal_order) != 0) {
-    m_journal_order = m_cct->_conf->rbd_journal_order;
+    m_journal_order = m_cct->_conf->get_val<uint64_t>("rbd_journal_order");
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_JOURNAL_SPLAY_WIDTH,
                        &m_journal_splay_width) != 0) {
-    m_journal_splay_width = m_cct->_conf->rbd_journal_splay_width;
+    m_journal_splay_width = m_cct->_conf->get_val<uint64_t>("rbd_journal_splay_width");
   }
   if (image_options.get(RBD_IMAGE_OPTION_JOURNAL_POOL, &m_journal_pool) != 0) {
-    m_journal_pool = m_cct->_conf->rbd_journal_pool;
+    m_journal_pool = m_cct->_conf->get_val<std::string>("rbd_journal_pool");
   }
   if (image_options.get(RBD_IMAGE_OPTION_DATA_POOL, &m_data_pool) != 0) {
-    m_data_pool = m_cct->_conf->rbd_default_data_pool;
+    m_data_pool = m_cct->_conf->get_val<std::string>("rbd_default_data_pool");
   }
 
   m_layout.object_size = 1ull << m_order;
@@ -250,14 +261,15 @@ void CreateRequest<I>::send() {
     return;
   }
 
-  r = validate_data_pool(m_cct, m_ioctx, m_features, m_data_pool,
+  r = validate_data_pool(m_cct, m_io_ctx, m_features, m_data_pool,
                          &m_data_pool_id);
   if (r < 0) {
     complete(r);
     return;
   }
 
-  if (!validate_layout(m_cct, m_size, m_layout)) {
+  if (((m_features & RBD_FEATURE_OBJECT_MAP) != 0) &&
+      (!validate_layout(m_cct, m_size, m_layout))) {
     complete(-EINVAL);
     return;
   }
@@ -267,8 +279,8 @@ void CreateRequest<I>::send() {
 
 template<typename I>
 void CreateRequest<I>::validate_pool() {
-  if (!m_cct->_conf->rbd_validate_pool) {
-    create_id_object();
+  if (!m_cct->_conf->get_val<bool>("rbd_validate_pool")) {
+    add_image_to_directory();
     return;
   }
 
@@ -282,7 +294,7 @@ void CreateRequest<I>::validate_pool() {
   op.stat(NULL, NULL, NULL);
 
   m_outbl.clear();
-  int r = m_ioctx.aio_operate(RBD_DIRECTORY, comp, &op, &m_outbl);
+  int r = m_io_ctx.aio_operate(RBD_DIRECTORY, comp, &op, &m_outbl);
   assert(r == 0);
   comp->release();
 }
@@ -308,7 +320,7 @@ void CreateRequest<I>::handle_validate_pool(int r) {
   // deadlocks).
 
   uint64_t snap_id;
-  r = m_ioctx.selfmanaged_snap_create(&snap_id);
+  r = m_io_ctx.selfmanaged_snap_create(&snap_id);
   if (r == -EINVAL) {
     lderr(m_cct) << "pool not configured for self-managed RBD snapshot support"
                  << dendl;
@@ -321,7 +333,7 @@ void CreateRequest<I>::handle_validate_pool(int r) {
     return;
   }
 
-  r = m_ioctx.selfmanaged_snap_remove(snap_id);
+  r = m_io_ctx.selfmanaged_snap_remove(snap_id);
   if (r < 0) {
     // we've already switched to self-managed snapshots -- no need to
     // error out in case of failure here.
@@ -336,15 +348,16 @@ template <typename I>
 void CreateRequest<I>::validate_overwrite() {
   ldout(m_cct, 20) << dendl;
 
-  m_data_io_ctx = m_ioctx;
+  m_data_io_ctx = m_io_ctx;
   if (m_data_pool_id != -1) {
-    librados::Rados rados(m_ioctx);
+    librados::Rados rados(m_io_ctx);
     int r = rados.ioctx_create2(m_data_pool_id, m_data_io_ctx);
     if (r < 0) {
       lderr(m_cct) << "data pool " << m_data_pool << " does not exist" << dendl;
       complete(r);
       return;
     }
+    m_data_io_ctx.set_namespace(m_io_ctx.get_namespace());
   }
 
   using klass = CreateRequest<I>;
@@ -368,7 +381,7 @@ void CreateRequest<I>::handle_validate_overwrite(int r) {
   bl.append("overwrite validated");
 
   if (r == 0 && m_outbl.contents_equal(bl)) {
-    create_id_object();
+    add_image_to_directory();
     return;
   } else if ((r < 0) && (r != -ENOENT)) {
     lderr(m_cct) << "failed to read RBD info: " << cpp_strerror(r) << dendl;
@@ -396,6 +409,48 @@ void CreateRequest<I>::handle_validate_overwrite(int r) {
     return;
   }
 
+  add_image_to_directory();
+}
+
+template<typename I>
+void CreateRequest<I>::add_image_to_directory() {
+  ldout(m_cct, 20) << dendl;
+
+  librados::ObjectWriteOperation op;
+  if (!m_io_ctx.get_namespace().empty()) {
+    cls_client::dir_state_assert(&op, cls::rbd::DIRECTORY_STATE_READY);
+  }
+  cls_client::dir_add_image(&op, m_image_name, m_image_id);
+
+  using klass = CreateRequest<I>;
+  librados::AioCompletion *comp =
+    create_rados_callback<klass, &klass::handle_add_image_to_directory>(this);
+  int r = m_io_ctx.aio_operate(RBD_DIRECTORY, comp, &op);
+  assert(r == 0);
+  comp->release();
+}
+
+template<typename I>
+void CreateRequest<I>::handle_add_image_to_directory(int r) {
+  ldout(m_cct, 20) << "r=" << r << dendl;
+
+  if (r == -EEXIST) {
+    ldout(m_cct, 5) << "directory entry for image " << m_image_name
+                    << " already exists" << dendl;
+    complete(r);
+    return;
+  } else if (!m_io_ctx.get_namespace().empty() && r == -ENOENT) {
+    ldout(m_cct, 5) << "namespace " << m_io_ctx.get_namespace()
+                    << " does not exist" << dendl;
+    complete(r);
+    return;
+  } else if (r < 0) {
+    lderr(m_cct) << "error adding image to directory: " << cpp_strerror(r)
+                 << dendl;
+    complete(r);
+    return;
+  }
+
   create_id_object();
 }
 
@@ -410,7 +465,7 @@ void CreateRequest<I>::create_id_object() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_create_id_object>(this);
-  int r = m_ioctx.aio_operate(m_id_obj, comp, &op);
+  int r = m_io_ctx.aio_operate(m_id_obj, comp, &op);
   assert(r == 0);
   comp->release();
 }
@@ -419,41 +474,18 @@ template<typename I>
 void CreateRequest<I>::handle_create_id_object(int r) {
   ldout(m_cct, 20) << "r=" << r << dendl;
 
-  if (r < 0) {
+  if (r == -EEXIST) {
+    ldout(m_cct, 5) << "id object for  " << m_image_name << " already exists"
+                    << dendl;
+    m_r_saved = r;
+    remove_from_dir();
+    return;
+  } else if (r < 0) {
     lderr(m_cct) << "error creating RBD id object: " << cpp_strerror(r)
                  << dendl;
-    complete(r);
-    return;
-  }
-
-  add_image_to_directory();
-}
-
-template<typename I>
-void CreateRequest<I>::add_image_to_directory() {
-  ldout(m_cct, 20) << dendl;
-
-  librados::ObjectWriteOperation op;
-  cls_client::dir_add_image(&op, m_image_name, m_image_id);
-
-  using klass = CreateRequest<I>;
-  librados::AioCompletion *comp =
-    create_rados_callback<klass, &klass::handle_add_image_to_directory>(this);
-  int r = m_ioctx.aio_operate(RBD_DIRECTORY, comp, &op);
-  assert(r == 0);
-  comp->release();
-}
-
-template<typename I>
-void CreateRequest<I>::handle_add_image_to_directory(int r) {
-  ldout(m_cct, 20) << "r=" << r << dendl;
-
-  if (r < 0) {
-    lderr(m_cct) << "error adding image to directory: " << cpp_strerror(r)
-                 << dendl;
-
     m_r_saved = r;
-    remove_id_object();
+    remove_from_dir();
+    return;
   }
 
   negotiate_features();
@@ -476,7 +508,7 @@ void CreateRequest<I>::negotiate_features() {
     create_rados_callback<klass, &klass::handle_negotiate_features>(this);
 
   m_outbl.clear();
-  int r = m_ioctx.aio_operate(RBD_DIRECTORY, comp, &op, &m_outbl);
+  int r = m_io_ctx.aio_operate(RBD_DIRECTORY, comp, &op, &m_outbl);
   assert(r == 0);
   comp->release();
 }
@@ -487,7 +519,7 @@ void CreateRequest<I>::handle_negotiate_features(int r) {
 
   uint64_t all_features;
   if (r >= 0) {
-    bufferlist::iterator it = m_outbl.begin();
+    auto it = m_outbl.cbegin();
     r = cls_client::get_all_features_finish(&it, &all_features);
   }
   if (r < 0) {
@@ -510,12 +542,13 @@ void CreateRequest<I>::create_image() {
   ostringstream oss;
   oss << RBD_DATA_PREFIX;
   if (m_data_pool_id != -1) {
-    oss << stringify(m_ioctx.get_id()) << ".";
+    oss << stringify(m_io_ctx.get_id()) << ".";
   }
   oss << m_image_id;
   if (oss.str().length() > RBD_MAX_BLOCK_NAME_PREFIX_LENGTH) {
     lderr(m_cct) << "object prefix '" << oss.str() << "' too large" << dendl;
-    complete(-EINVAL);
+    m_r_saved = -EINVAL;
+    remove_id_object();
     return;
   }
 
@@ -527,7 +560,7 @@ void CreateRequest<I>::create_image() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_create_image>(this);
-  int r = m_ioctx.aio_operate(m_header_obj, comp, &op);
+  int r = m_io_ctx.aio_operate(m_header_obj, comp, &op);
   assert(r == 0);
   comp->release();
 }
@@ -539,7 +572,7 @@ void CreateRequest<I>::handle_create_image(int r) {
   if (r < 0) {
     lderr(m_cct) << "error writing header: " << cpp_strerror(r) << dendl;
     m_r_saved = r;
-    remove_from_dir();
+    remove_id_object();
     return;
   }
 
@@ -562,7 +595,7 @@ void CreateRequest<I>::set_stripe_unit_count() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_set_stripe_unit_count>(this);
-  int r = m_ioctx.aio_operate(m_header_obj, comp, &op);
+  int r = m_io_ctx.aio_operate(m_header_obj, comp, &op);
   assert(r == 0);
   comp->release();
 }
@@ -598,7 +631,7 @@ void CreateRequest<I>::object_map_resize() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_object_map_resize>(this);
-  int r = m_ioctx.aio_operate(m_objmap_name, comp, &op);
+  int r = m_io_ctx.aio_operate(m_objmap_name, comp, &op);
   assert(r == 0);
   comp->release();
 }
@@ -635,7 +668,7 @@ void CreateRequest<I>::fetch_mirror_mode() {
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_fetch_mirror_mode>(this);
   m_outbl.clear();
-  int r = m_ioctx.aio_operate(RBD_MIRRORING, comp, &op, &m_outbl);
+  int r = m_io_ctx.aio_operate(RBD_MIRRORING, comp, &op, &m_outbl);
   assert(r == 0);
   comp->release();
 }
@@ -655,7 +688,7 @@ void CreateRequest<I>::handle_fetch_mirror_mode(int r) {
 
   cls::rbd::MirrorMode mirror_mode_internal = cls::rbd::MIRROR_MODE_DISABLED;
   if (r == 0) {
-    bufferlist::iterator it = m_outbl.begin();
+    auto it = m_outbl.cbegin();
     r = cls_client::mirror_mode_get_finish(&it, &mirror_mode_internal);
     if (r < 0) {
       lderr(m_cct) << "Failed to retrieve mirror mode" << dendl;
@@ -698,7 +731,7 @@ void CreateRequest<I>::journal_create() {
 
   librbd::journal::CreateRequest<I> *req =
     librbd::journal::CreateRequest<I>::create(
-      m_ioctx, m_image_id, m_journal_order, m_journal_splay_width,
+      m_io_ctx, m_image_id, m_journal_order, m_journal_splay_width,
       m_journal_pool, cls::journal::Tag::TAG_CLASS_NEW, tag_data,
       librbd::Journal<I>::IMAGE_CLIENT_ID, m_op_work_queue, ctx);
   req->send();
@@ -731,7 +764,7 @@ void CreateRequest<I>::mirror_image_enable() {
   ldout(m_cct, 20) << dendl;
   auto ctx = create_context_callback<
     CreateRequest<I>, &CreateRequest<I>::handle_mirror_image_enable>(this);
-  auto req = mirror::EnableRequest<I>::create(m_ioctx, m_image_id,
+  auto req = mirror::EnableRequest<I>::create(m_io_ctx, m_image_id,
                                               m_non_primary_global_image_id,
                                               m_op_work_queue, ctx);
   req->send();
@@ -782,7 +815,7 @@ void CreateRequest<I>::journal_remove() {
 
   librbd::journal::RemoveRequest<I> *req =
     librbd::journal::RemoveRequest<I>::create(
-      m_ioctx, m_image_id, librbd::Journal<I>::IMAGE_CLIENT_ID, m_op_work_queue,
+      m_io_ctx, m_image_id, librbd::Journal<I>::IMAGE_CLIENT_ID, m_op_work_queue,
       ctx);
   req->send();
 }
@@ -811,7 +844,7 @@ void CreateRequest<I>::remove_object_map() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_remove_object_map>(this);
-  int r = m_ioctx.aio_remove(m_objmap_name, comp);
+  int r = m_io_ctx.aio_remove(m_objmap_name, comp);
   assert(r == 0);
   comp->release();
 }
@@ -835,7 +868,7 @@ void CreateRequest<I>::remove_header_object() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_remove_header_object>(this);
-  int r = m_ioctx.aio_remove(m_header_obj, comp);
+  int r = m_io_ctx.aio_remove(m_header_obj, comp);
   assert(r == 0);
   comp->release();
 }
@@ -846,6 +879,30 @@ void CreateRequest<I>::handle_remove_header_object(int r) {
 
   if (r < 0) {
     lderr(m_cct) << "error cleaning up image header after creation failed: "
+                 << cpp_strerror(r) << dendl;
+  }
+
+  remove_id_object();
+}
+
+template<typename I>
+void CreateRequest<I>::remove_id_object() {
+  ldout(m_cct, 20) << dendl;
+
+  using klass = CreateRequest<I>;
+  librados::AioCompletion *comp =
+    create_rados_callback<klass, &klass::handle_remove_id_object>(this);
+  int r = m_io_ctx.aio_remove(m_id_obj, comp);
+  assert(r == 0);
+  comp->release();
+}
+
+template<typename I>
+void CreateRequest<I>::handle_remove_id_object(int r) {
+  ldout(m_cct, 20) << "r=" << r << dendl;
+
+  if (r < 0) {
+    lderr(m_cct) << "error cleaning up id object after creation failed: "
                  << cpp_strerror(r) << dendl;
   }
 
@@ -862,7 +919,7 @@ void CreateRequest<I>::remove_from_dir() {
   using klass = CreateRequest<I>;
   librados::AioCompletion *comp =
     create_rados_callback<klass, &klass::handle_remove_from_dir>(this);
-  int r = m_ioctx.aio_operate(RBD_DIRECTORY, comp, &op);
+  int r = m_io_ctx.aio_operate(RBD_DIRECTORY, comp, &op);
   assert(r == 0);
   comp->release();
 }
@@ -874,30 +931,6 @@ void CreateRequest<I>::handle_remove_from_dir(int r) {
   if (r < 0) {
     lderr(m_cct) << "error cleaning up image from rbd_directory object "
                  << "after creation failed: " << cpp_strerror(r) << dendl;
-  }
-
-  remove_id_object();
-}
-
-template<typename I>
-void CreateRequest<I>::remove_id_object() {
-  ldout(m_cct, 20) << dendl;
-
-  using klass = CreateRequest<I>;
-  librados::AioCompletion *comp =
-    create_rados_callback<klass, &klass::handle_remove_id_object>(this);
-  int r = m_ioctx.aio_remove(m_id_obj, comp);
-  assert(r == 0);
-  comp->release();
-}
-
-template<typename I>
-void CreateRequest<I>::handle_remove_id_object(int r) {
-  ldout(m_cct, 20) << "r=" << r << dendl;
-
-  if (r < 0) {
-    lderr(m_cct) << "error cleaning up id object after creation failed: "
-                 << cpp_strerror(r) << dendl;
   }
 
   complete(m_r_saved);

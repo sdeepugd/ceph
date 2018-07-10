@@ -16,6 +16,7 @@
 #define CEPH_MMDSLoadTargets_H
 
 #include "msg/Message.h"
+#include "mds/mdstypes.h"
 #include "messages/PaxosServiceMessage.h"
 #include "include/types.h"
 
@@ -42,16 +43,18 @@ public:
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
+    using ceph::decode;
+    auto p = payload.cbegin();
     paxos_decode(p);
-    ::decode(global_id, p);
-    ::decode(targets, p);
+    decode(global_id, p);
+    decode(targets, p);
   }
 
   void encode_payload(uint64_t features) override {
+    using ceph::encode;
     paxos_encode();
-    ::encode(global_id, payload);
-    ::encode(targets, payload);
+    encode(global_id, payload);
+    encode(targets, payload);
   }
 };
 

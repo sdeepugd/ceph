@@ -34,7 +34,7 @@ TEST(CephContext, do_command)
 
   string key("key");
   string value("value");
-  cct->_conf->set_val(key.c_str(), value.c_str(), false);
+  cct->_conf->set_val(key.c_str(), value.c_str());
   cmdmap_t cmdmap;
   cmdmap["var"] = key;
 
@@ -52,6 +52,12 @@ TEST(CephContext, do_command)
     EXPECT_EQ("{\n    \"key\": \"value\"\n}\n", s);
   }
 
+  {
+    bufferlist out;
+    cct->do_command("config diff get", cmdmap, "xml", &out);
+    string s(out.c_str(), out.length());
+    EXPECT_EQ("<config_diff_get><diff><key><default></default><override>" + value + "</override><final>value</final></key></diff></config_diff_get>", s);
+  }
   cct->put();
 }
 

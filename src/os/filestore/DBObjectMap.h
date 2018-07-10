@@ -8,7 +8,6 @@
 #include <string>
 
 #include <vector>
-#include "include/memory.h"
 #include <boost/scoped_ptr.hpp>
 
 #include "os/ObjectMap.h"
@@ -219,16 +218,25 @@ public:
     );
 
   /// Read initial state from backing store
+  int get_state();
+  /// Write current state settings to DB
+  void set_state();
+  /// Read initial state and upgrade or initialize state
   int init(bool upgrade = false);
 
   /// Upgrade store to current version
   int upgrade_to_v2();
 
   /// Consistency check, debug, there must be no parallel writes
-  int check(std::ostream &out, bool repair = false) override;
+  int check(std::ostream &out, bool repair = false, bool force = false) override;
 
   /// Ensure that all previous operations are durable
   int sync(const ghobject_t *oid=0, const SequencerPosition *spos=0) override;
+
+  void compact() override {
+    assert(db);
+    db->compact();
+  }
 
   /// Util, get all objects, there must be no other concurrent access
   int list_objects(vector<ghobject_t> *objs ///< [out] objects
@@ -256,30 +264,40 @@ public:
 
   /// persistent state for store @see generate_header
   struct State {
+    static const __u8 CUR_VERSION = 3;
     __u8 v;
     uint64_t seq;
-    State() : v(0), seq(1) {}
-    explicit State(uint64_t seq) : v(0), seq(seq) {}
+    // legacy is false when complete regions never used
+    bool legacy;
+    State() : v(0), seq(1), legacy(false) {}
+    explicit State(uint64_t seq) : v(0), seq(seq), legacy(false) {}
 
     void encode(bufferlist &bl) const {
-      ENCODE_START(2, 1, bl);
-      ::encode(v, bl);
-      ::encode(seq, bl);
+      ENCODE_START(3, 1, bl);
+      encode(v, bl);
+      encode(seq, bl);
+      encode(legacy, bl);
       ENCODE_FINISH(bl);
     }
 
-    void decode(bufferlist::iterator &bl) {
-      DECODE_START(2, bl);
+    void decode(bufferlist::const_iterator &bl) {
+      DECODE_START(3, bl);
       if (struct_v >= 2)
-	::decode(v, bl);
+	decode(v, bl);
       else
 	v = 0;
-      ::decode(seq, bl);
+      decode(seq, bl);
+      if (struct_v >= 3)
+	decode(legacy, bl);
+      else
+	legacy = false;
       DECODE_FINISH(bl);
     }
 
     void dump(Formatter *f) const {
+      f->dump_unsigned("v", v);
       f->dump_unsigned("seq", seq);
+      f->dump_bool("legacy", legacy);
     }
 
     static void generate_test_instances(list<State*> &o) {
@@ -300,25 +318,25 @@ public:
     void encode(bufferlist &bl) const {
       coll_t unused;
       ENCODE_START(2, 1, bl);
-      ::encode(seq, bl);
-      ::encode(parent, bl);
-      ::encode(num_children, bl);
-      ::encode(unused, bl);
-      ::encode(oid, bl);
-      ::encode(spos, bl);
+      encode(seq, bl);
+      encode(parent, bl);
+      encode(num_children, bl);
+      encode(unused, bl);
+      encode(oid, bl);
+      encode(spos, bl);
       ENCODE_FINISH(bl);
     }
 
-    void decode(bufferlist::iterator &bl) {
+    void decode(bufferlist::const_iterator &bl) {
       coll_t unused;
       DECODE_START(2, bl);
-      ::decode(seq, bl);
-      ::decode(parent, bl);
-      ::decode(num_children, bl);
-      ::decode(unused, bl);
-      ::decode(oid, bl);
+      decode(seq, bl);
+      decode(parent, bl);
+      decode(num_children, bl);
+      decode(unused, bl);
+      decode(oid, bl);
       if (struct_v >= 2)
-	::decode(spos, bl);
+	decode(spos, bl);
       DECODE_FINISH(bl);
     }
 
@@ -346,7 +364,7 @@ public:
 				      const string &in);
 private:
   /// Implicit lock on Header->seq
-  typedef ceph::shared_ptr<_Header> Header;
+  typedef std::shared_ptr<_Header> Header;
   Mutex cache_lock;
   SimpleLRU<ghobject_t, _Header> caches;
 
@@ -386,12 +404,12 @@ private:
     Header header;
 
     /// parent_iter == NULL iff no parent
-    ceph::shared_ptr<DBObjectMapIteratorImpl> parent_iter;
+    std::shared_ptr<DBObjectMapIteratorImpl> parent_iter;
     KeyValueDB::Iterator key_iter;
     KeyValueDB::Iterator complete_iter;
 
     /// cur_iter points to currently valid iterator
-    ceph::shared_ptr<ObjectMapIteratorImpl> cur_iter;
+    std::shared_ptr<ObjectMapIteratorImpl> cur_iter;
     int r;
 
     /// init() called, key_iter, complete_iter, parent_iter filled in
@@ -437,7 +455,7 @@ private:
     int adjust();
   };
 
-  typedef ceph::shared_ptr<DBObjectMapIteratorImpl> DBObjectMapIterator;
+  typedef std::shared_ptr<DBObjectMapIteratorImpl> DBObjectMapIterator;
   DBObjectMapIterator _get_iterator(Header header) {
     return std::make_shared<DBObjectMapIteratorImpl>(this, header);
   }

@@ -3,10 +3,13 @@
 #include "gtest/gtest.h"
 
 #include "mds/mdstypes.h"
+#include "include/err.h"
 #include "include/buffer.h"
 #include "include/rbd_types.h"
+#include "include/rados.h"
 #include "include/rados/librados.h"
 #include "include/rados/librados.hpp"
+#include "include/scope_guard.h"
 #include "include/stringify.h"
 #include "common/Checksummer.h"
 #include "global/global_context.h"
@@ -18,7 +21,7 @@
 #include <map>
 #include <sstream>
 #include <string>
-
+#include <regex>
 
 using namespace librados;
 using std::map;
@@ -27,6 +30,7 @@ using std::string;
 
 typedef RadosTest LibRadosMisc;
 typedef RadosTestPP LibRadosMiscPP;
+typedef RadosTestECPP LibRadosMiscECPP;
 
 TEST(LibRadosMiscVersion, Version) {
   int major, minor, extra;
@@ -77,6 +81,7 @@ TEST(LibRadosMiscConnectFailure, ConnectFailure) {
       break;  // yay, we timed out
     // try again
     rados_shutdown(cluster);
+    ASSERT_EQ(0, rados_create(&cluster, NULL));
   }
   ASSERT_NE(0, r);
 
@@ -94,27 +99,24 @@ TEST(LibRadosMiscPool, PoolCreationRace) {
   ASSERT_EQ(0, rados_conf_read_file(cluster_a, NULL));
   // kludge: i want to --log-file foo and only get cluster b
   //ASSERT_EQ(0, rados_conf_parse_env(cluster_a, NULL));
+  ASSERT_EQ(0, rados_conf_set(cluster_a,
+			      "objecter_debug_inject_relock_delay", "true"));
   ASSERT_EQ(0, rados_connect(cluster_a));
 
   ASSERT_EQ(0, rados_create(&cluster_b, NULL));
   ASSERT_EQ(0, rados_conf_read_file(cluster_b, NULL));
   ASSERT_EQ(0, rados_conf_parse_env(cluster_b, NULL));
-  ASSERT_EQ(0, rados_conf_set(cluster_b,
-			      "objecter_debug_inject_relock_delay", "true"));
   ASSERT_EQ(0, rados_connect(cluster_b));
 
   char poolname[80];
   snprintf(poolname, sizeof(poolname), "poolrace.%d", rand());
   rados_pool_create(cluster_a, poolname);
-  rados_ioctx_t a, b;
+  rados_ioctx_t a;
   rados_ioctx_create(cluster_a, poolname, &a);
-  int64_t poolid = rados_ioctx_get_id(a);
-
-  rados_ioctx_create2(cluster_b, poolid+1, &b);
 
   char pool2name[80];
   snprintf(pool2name, sizeof(pool2name), "poolrace2.%d", rand());
-  rados_pool_create(cluster_a, pool2name);
+  rados_pool_create(cluster_b, pool2name);
 
   list<rados_completion_t> cls;
   // this should normally trigger pretty easily, but we need to bound
@@ -126,7 +128,7 @@ TEST(LibRadosMiscPool, PoolCreationRace) {
     rados_completion_t c;
     rados_aio_create_completion(0, 0, 0, &c);
     cls.push_back(c);
-    rados_aio_read(b, "PoolCreationRaceObj", c, buf, 100, 0);
+    rados_aio_read(a, "PoolCreationRaceObj", c, buf, 100, 0);
     cout << "started " << (void*)c << std::endl;
     if (rados_aio_is_complete(cls.front())) {
       break;
@@ -146,7 +148,6 @@ TEST(LibRadosMiscPool, PoolCreationRace) {
   cout << "done." << std::endl;
 
   rados_ioctx_destroy(a);
-  rados_ioctx_destroy(b);
   rados_pool_delete(cluster_a, poolname);
   rados_pool_delete(cluster_a, pool2name);
   rados_shutdown(cluster_b);
@@ -278,16 +279,16 @@ static std::string read_key_from_tmap(IoCtx& ioctx, const std::string &obj,
     oss << "ioctx.read(" << obj << ", bl, 0, 0) returned " << r;
     return oss.str();
   }
-  bufferlist::iterator p = bl.begin();
+  auto p = bl.cbegin();
   bufferlist header;
   map<string, bufferlist> m;
-  ::decode(header, p);
-  ::decode(m, p);
+  decode(header, p);
+  decode(m, p);
   map<string, bufferlist>::iterator i = m.find(key);
   if (i == m.end())
     return "";
   std::string retstring;
-  ::decode(retstring, i->second);
+  decode(retstring, i->second);
   return retstring;
 }
 
@@ -297,11 +298,11 @@ static std::string add_key_to_tmap(IoCtx &ioctx, const std::string &obj,
   __u8 c = CEPH_OSD_TMAP_SET;
 
   bufferlist tmbl;
-  ::encode(c, tmbl);
-  ::encode(key, tmbl);
+  encode(c, tmbl);
+  encode(key, tmbl);
   bufferlist blbl;
-  ::encode(val, blbl);
-  ::encode(blbl, tmbl);
+  encode(val, blbl);
+  encode(blbl, tmbl);
   int ret = ioctx.tmap_update(obj, tmbl);
   if (ret) {
     ostringstream oss;
@@ -318,8 +319,8 @@ static int remove_key_from_tmap(IoCtx &ioctx, const std::string &obj,
   __u8 c = CEPH_OSD_TMAP_RM;
 
   bufferlist tmbl;
-  ::encode(c, tmbl);
-  ::encode(key, tmbl);
+  encode(c, tmbl);
+  encode(key, tmbl);
   int ret = ioctx.tmap_update(obj, tmbl);
   if (ret) {
     ostringstream oss;
@@ -337,9 +338,9 @@ TEST_F(LibRadosMiscPP, TmapUpdatePP) {
     bufferlist emptybl;
 
     bufferlist tmbl;
-    ::encode(c, tmbl);
-    ::encode(my_tmap, tmbl);
-    ::encode(emptybl, tmbl);
+    encode(c, tmbl);
+    encode(my_tmap, tmbl);
+    encode(emptybl, tmbl);
     ASSERT_EQ(0, ioctx.tmap_update("foo", tmbl));
   }
 
@@ -366,9 +367,9 @@ TEST_F(LibRadosMiscPP, TmapUpdateMisorderedPP) {
     bufferlist emptybl;
 
     bufferlist tmbl;
-    ::encode(c, tmbl);
-    ::encode(my_tmap, tmbl);
-    ::encode(emptybl, tmbl);
+    encode(c, tmbl);
+    encode(my_tmap, tmbl);
+    encode(emptybl, tmbl);
     ASSERT_EQ(0, ioctx.tmap_update("foo", tmbl));
   }
 
@@ -376,19 +377,19 @@ TEST_F(LibRadosMiscPP, TmapUpdateMisorderedPP) {
   {
     __u8 c = CEPH_OSD_TMAP_SET;
     bufferlist tmbl;
-    ::encode(c, tmbl);
-    ::encode("a", tmbl);
+    encode(c, tmbl);
+    encode("a", tmbl);
     bufferlist blbl;
-    ::encode("old", blbl);
-    ::encode(blbl, tmbl);
+    encode("old", blbl);
+    encode(blbl, tmbl);
 
-    ::encode(c, tmbl);
-    ::encode("b", tmbl);
-    ::encode(blbl, tmbl);
+    encode(c, tmbl);
+    encode("b", tmbl);
+    encode(blbl, tmbl);
 
-    ::encode(c, tmbl);
-    ::encode("c", tmbl);
-    ::encode(blbl, tmbl);
+    encode(c, tmbl);
+    encode("c", tmbl);
+    encode(blbl, tmbl);
 
     ASSERT_EQ(0, ioctx.tmap_update("foo", tmbl));
   }
@@ -397,19 +398,19 @@ TEST_F(LibRadosMiscPP, TmapUpdateMisorderedPP) {
   {
     __u8 c = CEPH_OSD_TMAP_SET;
     bufferlist tmbl;
-    ::encode(c, tmbl);
-    ::encode("b", tmbl);
+    encode(c, tmbl);
+    encode("b", tmbl);
     bufferlist blbl;
-    ::encode("new", blbl);
-    ::encode(blbl, tmbl);
+    encode("new", blbl);
+    encode(blbl, tmbl);
 
-    ::encode(c, tmbl);
-    ::encode("a", tmbl);
-    ::encode(blbl, tmbl);
+    encode(c, tmbl);
+    encode("a", tmbl);
+    encode(blbl, tmbl);
 
-    ::encode(c, tmbl);
-    ::encode("c", tmbl);
-    ::encode(blbl, tmbl);
+    encode(c, tmbl);
+    encode("c", tmbl);
+    encode(blbl, tmbl);
 
     ASSERT_EQ(0, ioctx.tmap_update("foo", tmbl));
   }
@@ -430,15 +431,15 @@ TEST_F(LibRadosMiscPP, TmapUpdateMisorderedPutPP) {
   // create unsorted tmap
   string h("header");
   bufferlist bl;
-  ::encode(h, bl);
+  encode(h, bl);
   uint32_t n = 3;
-  ::encode(n, bl);
-  ::encode(string("b"), bl);
-  ::encode(string("bval"), bl);
-  ::encode(string("a"), bl);
-  ::encode(string("aval"), bl);
-  ::encode(string("c"), bl);
-  ::encode(string("cval"), bl);
+  encode(n, bl);
+  encode(string("b"), bl);
+  encode(string("bval"), bl);
+  encode(string("a"), bl);
+  encode(string("aval"), bl);
+  encode(string("c"), bl);
+  encode(string("cval"), bl);
   bufferlist orig = bl;  // tmap_put steals bl content
   ASSERT_EQ(0, ioctx.tmap_put("foo", bl));
 
@@ -458,8 +459,8 @@ TEST_F(LibRadosMiscPP, Tmap2OmapPP) {
   omap["3"].append("c");
   {
     bufferlist bl;
-    ::encode(hdr, bl);
-    ::encode(omap, bl);
+    encode(hdr, bl);
+    encode(omap, bl);
     ASSERT_EQ(0, ioctx.tmap_put("foo", bl));
   }
 
@@ -514,9 +515,9 @@ TEST_F(LibRadosMisc, Exec) {
   ASSERT_GT(res, 0);
   bufferlist bl;
   bl.append(buf2, res);
-  bufferlist::iterator iter = bl.begin();
+  auto iter = bl.cbegin();
   uint64_t all_features;
-  ::decode(all_features, iter);
+  decode(all_features, iter);
   // make sure *some* features are specified; don't care which ones
   ASSERT_NE(all_features, (unsigned)0);
 }
@@ -527,9 +528,9 @@ TEST_F(LibRadosMiscPP, ExecPP) {
   bufferlist bl2, out;
   int r = ioctx.exec("foo", "rbd", "get_all_features", bl2, out);
   ASSERT_EQ(0, r);
-  bufferlist::iterator iter = out.begin();
+  auto iter = out.cbegin();
   uint64_t all_features;
-  ::decode(all_features, iter);
+  decode(all_features, iter);
   // make sure *some* features are specified; don't care which ones
   ASSERT_NE(all_features, (unsigned)0);
 }
@@ -751,7 +752,8 @@ TEST_F(LibRadosMiscPP, BigAttrPP) {
   for (int i=0; i<1000; i++) {
     bl.clear();
     got.clear();
-    bl.append(buffer::create(MIN(g_conf->osd_max_attr_size, 1024)));
+    bl.append(buffer::create(std::min<uint64_t>(g_conf->osd_max_attr_size,
+						1024)));
     char n[10];
     snprintf(n, sizeof(n), "a%d", i);
     ASSERT_EQ(0, ioctx.setxattr("foo", n, bl));
@@ -854,6 +856,14 @@ protected:
     ASSERT_EQ("", create_one_ec_pool_pp(pool_name, s_cluster));
     src_pool_name = get_temp_pool_name();
     ASSERT_EQ(0, s_cluster.pool_create(src_pool_name.c_str()));
+
+    librados::IoCtx ioctx;
+    ASSERT_EQ(0, s_cluster.ioctx_create(pool_name.c_str(), ioctx));
+    ioctx.application_enable("rados", true);
+
+    librados::IoCtx src_ioctx;
+    ASSERT_EQ(0, s_cluster.ioctx_create(src_pool_name.c_str(), src_ioctx));
+    src_ioctx.application_enable("rados", true);
   }
   static void TearDownTestCase() {
     ASSERT_EQ(0, s_cluster.pool_delete(src_pool_name.c_str()));
@@ -1123,7 +1133,7 @@ TYPED_TEST(LibRadosChecksum, Subset) {
 
   typename TestFixture::init_value_t init_value = -1;
   bufferlist init_value_bl;
-  ::encode(init_value, init_value_bl);
+  encode(init_value, init_value_bl);
 
   std::vector<bufferlist> checksum_bls(csum_count);
   std::vector<int> checksum_rvals(csum_count);
@@ -1139,13 +1149,13 @@ TYPED_TEST(LibRadosChecksum, Subset) {
   for (uint32_t i = 0; i < csum_count; ++i) {
     ASSERT_EQ(0, checksum_rvals[i]);
 
-    auto bl_it = checksum_bls[i].begin();
+    auto bl_it = checksum_bls[i].cbegin();
     uint32_t count;
-    ::decode(count, bl_it);
+    decode(count, bl_it);
     ASSERT_EQ(1U, count);
 
     typename TestFixture::value_t value;
-    ::decode(value, bl_it);
+    decode(value, bl_it);
 
     bufferlist content_sub_bl;
     content_sub_bl.substr_of(this->content_bl, i * chunk_size, chunk_size);
@@ -1166,7 +1176,7 @@ TYPED_TEST(LibRadosChecksum, Chunked) {
 
   typename TestFixture::init_value_t init_value = -1;
   bufferlist init_value_bl;
-  ::encode(init_value, init_value_bl);
+  encode(init_value, init_value_bl);
 
   bufferlist checksum_bl;
   int checksum_rval;
@@ -1178,9 +1188,9 @@ TYPED_TEST(LibRadosChecksum, Chunked) {
   ASSERT_EQ(0, this->ioctx.operate("foo", &op, NULL));
   ASSERT_EQ(0, checksum_rval);
 
-  auto bl_it = checksum_bl.begin();
+  auto bl_it = checksum_bl.cbegin();
   uint32_t count;
-  ::decode(count, bl_it);
+  decode(count, bl_it);
   ASSERT_EQ(csum_count, count);
 
   std::vector<typename TestFixture::value_t> expected_values(csum_count);
@@ -1194,7 +1204,216 @@ TYPED_TEST(LibRadosChecksum, Chunked) {
 
   for (uint32_t i = 0; i < csum_count; ++i) {
     typename TestFixture::value_t value;
-    ::decode(value, bl_it);
+    decode(value, bl_it);
     ASSERT_EQ(expected_values[i], value);
   }
+}
+
+TEST_F(LibRadosMiscPP, CmpExtPP) {
+  bufferlist cmp_bl, bad_cmp_bl, write_bl;
+  char stored_str[] = "1234567891";
+  char mismatch_str[] = "1234577777";
+
+  write_bl.append(stored_str);
+  ioctx.write("cmpextpp", write_bl, write_bl.length(), 0);
+  cmp_bl.append(stored_str);
+  ASSERT_EQ(0, ioctx.cmpext("cmpextpp", 0, cmp_bl));
+
+  bad_cmp_bl.append(mismatch_str);
+  ASSERT_EQ(-MAX_ERRNO - 5, ioctx.cmpext("cmpextpp", 0, bad_cmp_bl));
+}
+
+TEST_F(LibRadosMisc, CmpExt) {
+  bufferlist cmp_bl, bad_cmp_bl, write_bl;
+  char stored_str[] = "1234567891";
+  char mismatch_str[] = "1234577777";
+
+  ASSERT_EQ(0,
+	    rados_write(ioctx, "cmpextpp", stored_str, sizeof(stored_str), 0));
+
+  ASSERT_EQ(0,
+	    rados_cmpext(ioctx, "cmpextpp", stored_str, sizeof(stored_str), 0));
+
+  ASSERT_EQ(-MAX_ERRNO - 5,
+	    rados_cmpext(ioctx, "cmpextpp", mismatch_str, sizeof(mismatch_str), 0));
+}
+
+TEST_F(LibRadosMisc, Applications) {
+  const char *cmd[] = {"{\"prefix\":\"osd dump\"}", nullptr};
+  char *buf, *st;
+  size_t buflen, stlen;
+  ASSERT_EQ(0, rados_mon_command(cluster, (const char **)cmd, 1, "", 0, &buf,
+                                 &buflen, &st, &stlen));
+  ASSERT_LT(0u, buflen);
+  string result(buf);
+  rados_buffer_free(buf);
+  rados_buffer_free(st);
+  if (!std::regex_search(result, std::regex("require_osd_release [l-z]"))) {
+    std::cout << "SKIPPING";
+    return;
+  }
+
+  char apps[128];
+  size_t app_len;
+
+  app_len = sizeof(apps);
+  ASSERT_EQ(0, rados_application_list(ioctx, apps, &app_len));
+  ASSERT_EQ(6U, app_len);
+  ASSERT_EQ(0, memcmp("rados\0", apps, app_len));
+
+  ASSERT_EQ(0, rados_application_enable(ioctx, "app1", 1));
+  ASSERT_EQ(-EPERM, rados_application_enable(ioctx, "app2", 0));
+  ASSERT_EQ(0, rados_application_enable(ioctx, "app2", 1));
+
+  ASSERT_EQ(-ERANGE, rados_application_list(ioctx, apps, &app_len));
+  ASSERT_EQ(16U, app_len);
+  ASSERT_EQ(0, rados_application_list(ioctx, apps, &app_len));
+  ASSERT_EQ(16U, app_len);
+  ASSERT_EQ(0, memcmp("app1\0app2\0rados\0", apps, app_len));
+
+  char keys[128];
+  char vals[128];
+  size_t key_len;
+  size_t val_len;
+
+  key_len = sizeof(keys);
+  val_len = sizeof(vals);
+  ASSERT_EQ(-ENOENT, rados_application_metadata_list(ioctx, "dne", keys,
+                                                     &key_len, vals, &val_len));
+  ASSERT_EQ(0, rados_application_metadata_list(ioctx, "app1", keys, &key_len,
+                                               vals, &val_len));
+  ASSERT_EQ(0U, key_len);
+  ASSERT_EQ(0U, val_len);
+
+  ASSERT_EQ(-ENOENT, rados_application_metadata_set(ioctx, "dne", "key",
+                                                    "value"));
+  ASSERT_EQ(0, rados_application_metadata_set(ioctx, "app1", "key1", "value1"));
+  ASSERT_EQ(0, rados_application_metadata_set(ioctx, "app1", "key2", "value2"));
+
+  ASSERT_EQ(-ERANGE, rados_application_metadata_list(ioctx, "app1", keys,
+                                                     &key_len, vals, &val_len));
+  ASSERT_EQ(10U, key_len);
+  ASSERT_EQ(14U, val_len);
+  ASSERT_EQ(0, rados_application_metadata_list(ioctx, "app1", keys, &key_len,
+                                               vals, &val_len));
+  ASSERT_EQ(10U, key_len);
+  ASSERT_EQ(14U, val_len);
+  ASSERT_EQ(0, memcmp("key1\0key2\0", keys, key_len));
+  ASSERT_EQ(0, memcmp("value1\0value2\0", vals, val_len));
+
+  ASSERT_EQ(0, rados_application_metadata_remove(ioctx, "app1", "key1"));
+  ASSERT_EQ(0, rados_application_metadata_list(ioctx, "app1", keys, &key_len,
+                                               vals, &val_len));
+  ASSERT_EQ(5U, key_len);
+  ASSERT_EQ(7U, val_len);
+  ASSERT_EQ(0, memcmp("key2\0", keys, key_len));
+  ASSERT_EQ(0, memcmp("value2\0", vals, val_len));
+}
+
+TEST_F(LibRadosMiscPP, Applications) {
+  bufferlist inbl, outbl;
+  string outs;
+  ASSERT_EQ(0, cluster.mon_command("{\"prefix\": \"osd dump\"}",
+				   inbl, &outbl, &outs));
+  ASSERT_LT(0u, outbl.length());
+  ASSERT_LE(0u, outs.length());
+  if (!std::regex_search(outbl.to_str(),
+			 std::regex("require_osd_release [l-z]"))) {
+    std::cout << "SKIPPING";
+    return;
+  }
+
+  std::set<std::string> expected_apps = {"rados"};
+  std::set<std::string> apps;
+  ASSERT_EQ(0, ioctx.application_list(&apps));
+  ASSERT_EQ(expected_apps, apps);
+
+  ASSERT_EQ(0, ioctx.application_enable("app1", true));
+  ASSERT_EQ(-EPERM, ioctx.application_enable("app2", false));
+  ASSERT_EQ(0, ioctx.application_enable("app2", true));
+
+  expected_apps = {"app1", "app2", "rados"};
+  ASSERT_EQ(0, ioctx.application_list(&apps));
+  ASSERT_EQ(expected_apps, apps);
+
+  std::map<std::string, std::string> expected_meta;
+  std::map<std::string, std::string> meta;
+  ASSERT_EQ(-ENOENT, ioctx.application_metadata_list("dne", &meta));
+  ASSERT_EQ(0, ioctx.application_metadata_list("app1", &meta));
+  ASSERT_EQ(expected_meta, meta);
+
+  ASSERT_EQ(-ENOENT, ioctx.application_metadata_set("dne", "key1", "value1"));
+  ASSERT_EQ(0, ioctx.application_metadata_set("app1", "key1", "value1"));
+  ASSERT_EQ(0, ioctx.application_metadata_set("app1", "key2", "value2"));
+
+  expected_meta = {{"key1", "value1"}, {"key2", "value2"}};
+  ASSERT_EQ(0, ioctx.application_metadata_list("app1", &meta));
+  ASSERT_EQ(expected_meta, meta);
+
+  ASSERT_EQ(0, ioctx.application_metadata_remove("app1", "key1"));
+
+  expected_meta = {{"key2", "value2"}};
+  ASSERT_EQ(0, ioctx.application_metadata_list("app1", &meta));
+  ASSERT_EQ(expected_meta, meta);
+}
+
+TEST_F(LibRadosMiscECPP, CompareExtentRange) {
+  bufferlist bl1;
+  bl1.append("ceph");
+  ObjectWriteOperation write;
+  write.write(0, bl1);
+  ASSERT_EQ(0, ioctx.operate("foo", &write));
+
+  bufferlist bl2;
+  bl2.append("ph");
+  bl2.append(std::string(2, '\0'));
+  ObjectReadOperation read1;
+  read1.cmpext(2, bl2, nullptr);
+  ASSERT_EQ(0, ioctx.operate("foo", &read1, nullptr));
+
+  bufferlist bl3;
+  bl3.append(std::string(4, '\0'));
+  ObjectReadOperation read2;
+  read2.cmpext(2097152, bl3, nullptr);
+  ASSERT_EQ(0, ioctx.operate("foo", &read2, nullptr));
+}
+
+TEST_F(LibRadosMisc, MinCompatClient) {
+  int8_t min_compat_client;
+  int8_t require_min_compat_client;
+  ASSERT_EQ(0, rados_get_min_compatible_client(cluster,
+                                               &min_compat_client,
+                                               &require_min_compat_client));
+  ASSERT_LE(-1, min_compat_client);
+  ASSERT_GT(CEPH_RELEASE_MAX, min_compat_client);
+
+  ASSERT_LE(-1, require_min_compat_client);
+  ASSERT_GT(CEPH_RELEASE_MAX, require_min_compat_client);
+}
+
+TEST_F(LibRadosMiscPP, MinCompatClient) {
+  int8_t min_compat_client;
+  int8_t require_min_compat_client;
+  ASSERT_EQ(0, cluster.get_min_compatible_client(&min_compat_client,
+                                                 &require_min_compat_client));
+  ASSERT_LE(-1, min_compat_client);
+  ASSERT_GT(CEPH_RELEASE_MAX, min_compat_client);
+
+  ASSERT_LE(-1, require_min_compat_client);
+  ASSERT_GT(CEPH_RELEASE_MAX, require_min_compat_client);
+}
+
+TEST_F(LibRadosMiscPP, Conf) {
+  const char* const option = "bluestore_throttle_bytes";
+  size_t new_size = 1 << 20;
+  std::string original;
+  ASSERT_EQ(0, cluster.conf_get(option, original));
+  auto restore_setting = make_scope_guard([&] {
+    cluster.conf_set(option, original.c_str());
+  });
+  std::string expected = std::to_string(new_size);
+  ASSERT_EQ(0, cluster.conf_set(option, expected.c_str()));
+  std::string actual;
+  ASSERT_EQ(0, cluster.conf_get(option, actual));
+  ASSERT_EQ(expected, actual);
 }

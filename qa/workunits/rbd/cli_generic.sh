@@ -1,9 +1,19 @@
 #!/bin/sh -ex
 
+export RBD_FORCE_ALLOW_V1=1
+
 # make sure rbd pool is EMPTY.. this is a test script!!
 rbd ls | wc -l | grep -v '^0$' && echo "nonempty rbd pool, aborting!  run this script on an empty test cluster only." && exit 1
 
-IMGS="testimg1 testimg2 testimg3 testimg-diff1 testimg-diff2 testimg-diff3 foo foo2 bar bar2 test1 test2 test3 clone2"
+IMGS="testimg1 testimg2 testimg3 testimg4 testimg5 testimg6 testimg-diff1 testimg-diff2 testimg-diff3 foo foo2 bar bar2 test1 test2 test3 test4 clone2"
+
+expect_fail()
+{
+  set -x
+  set +e
+  "$@"
+  if [ $? == 0 ]; then return 1; else return 0; fi
+}
 
 tiered=0
 if ceph osd dump | grep ^pool | grep "'rbd'" | grep tier; then
@@ -42,8 +52,8 @@ test_others() {
     rbd export testimg1 /tmp/img3
 
     # info
-    rbd info testimg1 | grep 'size 128 MB'
-    rbd info --snap=snap1 testimg1 | grep 'size 256 MB'
+    rbd info testimg1 | grep 'size 128 MiB'
+    rbd info --snap=snap1 testimg1 | grep 'size 256 MiB'
 
     # export-diff
     rm -rf /tmp/diff-testimg1-1 /tmp/diff-testimg1-2
@@ -56,10 +66,10 @@ test_others() {
     rbd import-diff --sparse-size 8K /tmp/diff-testimg1-2 testimg-diff1
 
     # info
-    rbd info testimg1 | grep 'size 128 MB'
-    rbd info --snap=snap1 testimg1 | grep 'size 256 MB'
-    rbd info testimg-diff1 | grep 'size 128 MB'
-    rbd info --snap=snap1 testimg-diff1 | grep 'size 256 MB'
+    rbd info testimg1 | grep 'size 128 MiB'
+    rbd info --snap=snap1 testimg1 | grep 'size 256 MiB'
+    rbd info testimg-diff1 | grep 'size 128 MiB'
+    rbd info --snap=snap1 testimg-diff1 | grep 'size 256 MiB'
 
     # make copies
     rbd copy testimg1 --snap=snap1 testimg2
@@ -68,10 +78,18 @@ test_others() {
     rbd copy testimg-diff1 --sparse-size 768K testimg-diff3
 
     # verify the result
-    rbd info testimg2 | grep 'size 256 MB'
-    rbd info testimg3 | grep 'size 128 MB'
-    rbd info testimg-diff2 | grep 'size 256 MB'
-    rbd info testimg-diff3 | grep 'size 128 MB'
+    rbd info testimg2 | grep 'size 256 MiB'
+    rbd info testimg3 | grep 'size 128 MiB'
+    rbd info testimg-diff2 | grep 'size 256 MiB'
+    rbd info testimg-diff3 | grep 'size 128 MiB'
+
+    # deep copies
+    rbd deep copy testimg1 testimg4
+    rbd deep copy testimg1 --snap=snap1 testimg5
+    rbd info testimg4 | grep 'size 128 MiB'
+    rbd info testimg5 | grep 'size 256 MiB'
+    rbd snap ls testimg4 | grep -v 'SNAPID' | wc -l | grep 1
+    rbd snap ls testimg4 | grep '.*snap1.*'
 
     rbd export testimg1 /tmp/img1.new
     rbd export testimg2 /tmp/img2.new
@@ -88,8 +106,8 @@ test_others() {
     # rollback
     rbd snap rollback --snap=snap1 testimg1
     rbd snap rollback --snap=snap1 testimg-diff1
-    rbd info testimg1 | grep 'size 256 MB'
-    rbd info testimg-diff1 | grep 'size 256 MB'
+    rbd info testimg1 | grep 'size 256 MiB'
+    rbd info testimg-diff1 | grep 'size 256 MiB'
     rbd export testimg1 /tmp/img1.snap1
     rbd export testimg-diff1 /tmp/img-diff1.snap1
     cmp /tmp/img2 /tmp/img1.snap1
@@ -100,6 +118,7 @@ test_others() {
     rbd rm testimg3
     rbd create testimg2 -s 0
     rbd cp testimg2 testimg3
+    rbd deep cp testimg2 testimg6
 
     # remove snapshots
     rbd snap rm --snap=snap1 testimg1
@@ -123,6 +142,7 @@ test_rename() {
     rbd rename bar2 foo2 2>&1 | grep exists
 
     rados mkpool rbd2
+    rbd pool init rbd2
     rbd create -p rbd2 -s 1 foo
     rbd rename rbd2/foo rbd2/bar
     rbd -p rbd2 ls | grep bar
@@ -146,8 +166,8 @@ test_ls() {
     rbd ls | grep test2
     rbd ls | wc -l | grep 2
     # look for fields in output of ls -l without worrying about space
-    rbd ls -l | grep 'test1.*1024k.*1'
-    rbd ls -l | grep 'test2.*1024k.*1'
+    rbd ls -l | grep 'test1.*1 MiB.*1'
+    rbd ls -l | grep 'test2.*1 MiB.*1'
 
     rbd rm test1
     rbd rm test2
@@ -157,8 +177,8 @@ test_ls() {
     rbd ls | grep test1
     rbd ls | grep test2
     rbd ls | wc -l | grep 2
-    rbd ls -l | grep 'test1.*1024k.*2'
-    rbd ls -l | grep 'test2.*1024k.*2'
+    rbd ls -l | grep 'test1.*1 MiB.*2'
+    rbd ls -l | grep 'test2.*1 MiB.*2'
 
     rbd rm test1
     rbd rm test2
@@ -168,10 +188,10 @@ test_ls() {
     rbd ls | grep test1
     rbd ls | grep test2
     rbd ls | wc -l | grep 2
-    rbd ls -l | grep 'test1.*1024k.*2'
-    rbd ls -l | grep 'test2.*1024k.*1'
+    rbd ls -l | grep 'test1.*1 MiB.*2'
+    rbd ls -l | grep 'test2.*1 MiB.*1'
     remove_images
-	
+
     # test that many images can be shown by ls
     for i in $(seq -w 00 99); do
 	rbd create image.$i -s 1
@@ -179,7 +199,7 @@ test_ls() {
     rbd ls | wc -l | grep 100
     rbd ls -l | grep image | wc -l | grep 100
     for i in $(seq -w 00 99); do
-	rbd rm image.$i 
+	rbd rm image.$i
     done
 
     for i in $(seq -w 00 99); do
@@ -188,7 +208,7 @@ test_ls() {
     rbd ls | wc -l | grep 100
     rbd ls -l | grep image |  wc -l | grep 100
     for i in $(seq -w 00 99); do
-	rbd rm image.$i 
+	rbd rm image.$i
     done
 }
 
@@ -243,7 +263,7 @@ test_remove() {
     rbd create --image-format 2 -s 1 test2
     rbd snap create test2@snap
     rbd snap protect test2@snap
-    rbd clone test2@snap clone
+    rbd clone test2@snap clone --rbd-default-clone-format 1
 
     rados -p rbd rm rbd_children
     rbd rm clone
@@ -289,8 +309,9 @@ test_pool_image_args() {
     remove_images
 
     ceph osd pool delete test test --yes-i-really-really-mean-it || true
-    ceph osd pool create test 100
-    truncate -s 1 /tmp/empty
+    ceph osd pool create test 32
+    rbd pool init test
+    truncate -s 1 /tmp/empty /tmp/empty@snap
 
     rbd ls | wc -l | grep 0
     rbd create -s 1 test1
@@ -301,6 +322,12 @@ test_pool_image_args() {
     rbd ls | grep -q test3
     rbd import /tmp/empty foo
     rbd ls | grep -q foo
+
+    # should fail due to "destination snapname specified"
+    rbd import --dest test/empty@snap /tmp/empty && exit 1 || true
+    rbd import /tmp/empty test/empty@snap && exit 1 || true
+    rbd import --image test/empty@snap /tmp/empty && exit 1 || true
+    rbd import /tmp/empty@snap && exit 1 || true
 
     rbd ls test | wc -l | grep 0
     rbd import /tmp/empty test/test1
@@ -336,7 +363,7 @@ test_pool_image_args() {
     rbd ls | grep test12
     rbd ls test | grep -qv test12
 
-    rm -f /tmp/empty
+    rm -f /tmp/empty /tmp/empty@snap
     ceph osd pool delete test test --yes-i-really-really-mean-it
 
     for f in foo test1 test10 test12 test2 test3 ; do
@@ -352,6 +379,7 @@ test_clone() {
     rbd snap protect test1@s1
 
     rados mkpool rbd2
+    rbd pool init rbd2
     rbd clone test1@s1 rbd2/clone
     rbd -p rbd2 ls | grep clone
     rbd -p rbd2 ls -l | grep clone | grep test1@s1
@@ -378,8 +406,8 @@ test_trash() {
     echo "testing trash..."
     remove_images
 
-    rbd create --image-format 2 -s 1 test1
-    rbd create --image-format 2 -s 1 test2
+    rbd create $RBD_CREATE_ARGS -s 1 test1
+    rbd create $RBD_CREATE_ARGS -s 1 test2
     rbd ls | grep test1
     rbd ls | grep test2
     rbd ls | wc -l | grep 2
@@ -401,14 +429,14 @@ test_trash() {
 
     rbd trash mv test2
     ID=`rbd trash ls | cut -d ' ' -f 1`
-    rbd info --image-id $ID | grep "rbd image '$ID'"
+    rbd info --image-id $ID | grep "rbd image 'test2'"
 
     rbd trash restore $ID
     rbd ls | grep test2
     rbd ls | wc -l | grep 1
     rbd ls -l | grep 'test2.*2.*'
 
-    rbd trash mv test2 --delay 10
+    rbd trash mv test2 --expires-at "3600 sec"
     rbd trash ls | grep test2
     rbd trash ls | wc -l | grep 1
     rbd trash ls -l | grep 'test2.*USER.*protected until'
@@ -416,7 +444,7 @@ test_trash() {
     rbd trash rm $ID 2>&1 | grep 'Deferment time has not expired'
     rbd trash rm --image-id $ID --force
 
-    rbd create --image-format 2 -s 1 test1
+    rbd create $RBD_CREATE_ARGS -s 1 test1
     rbd snap create test1@snap1
     rbd snap protect test1@snap1
     rbd trash mv test1
@@ -444,6 +472,187 @@ test_trash() {
     remove_images
 }
 
+test_purge() {
+    echo "testing trash purge..."
+    remove_images
+
+    rbd trash purge
+    rbd trash ls | wc -l | grep 0
+
+    rbd create $RBD_CREATE_ARGS foo -s 1
+    rbd create $RBD_CREATE_ARGS bar -s 1
+
+    rbd trash mv foo --expires-at "10 sec"
+    rbd trash mv bar --expires-at "30 sec"
+
+    rbd trash purge --expired-before "now + 10 sec"
+    rbd trash ls | grep -v foo | wc -l | grep 1
+    rbd trash ls | grep bar
+
+    LAST_IMG=$(rbd trash ls | grep bar | awk '{print $1;}')
+    rbd trash rm $LAST_IMG --force --no-progress | grep -v '.' | wc -l | grep 0
+}
+
+test_deep_copy_clone() {
+    echo "testing deep copy clone..."
+    remove_images
+
+    rbd create testimg1 $RBD_CREATE_ARGS --size 256
+    rbd snap create testimg1 --snap=snap1
+    rbd snap protect testimg1@snap1
+    rbd clone testimg1@snap1 testimg2
+    rbd snap create testimg2@snap2
+    rbd deep copy testimg2 testimg3
+    rbd info testimg3 | grep 'size 256 MiB'
+    rbd info testimg3 | grep 'parent: rbd/testimg1@snap1'
+    rbd snap ls testimg3 | grep -v 'SNAPID' | wc -l | grep 1
+    rbd snap ls testimg3 | grep '.*snap2.*'
+    rbd info testimg2 | grep 'features:.*deep-flatten' || rbd snap rm testimg2@snap2
+    rbd info testimg3 | grep 'features:.*deep-flatten' || rbd snap rm testimg3@snap2
+    rbd flatten testimg2
+    rbd flatten testimg3
+    rbd snap unprotect testimg1@snap1
+    rbd snap purge testimg2
+    rbd snap purge testimg3
+    rbd rm testimg2
+    rbd rm testimg3
+
+    rbd snap protect testimg1@snap1
+    rbd clone testimg1@snap1 testimg2
+    rbd snap create testimg2@snap2
+    rbd deep copy --flatten testimg2 testimg3
+    rbd info testimg3 | grep 'size 256 MiB'
+    rbd info testimg3 | grep -v 'parent:'
+    rbd snap ls testimg3 | grep -v 'SNAPID' | wc -l | grep 1
+    rbd snap ls testimg3 | grep '.*snap2.*'
+    rbd info testimg2 | grep 'features:.*deep-flatten' || rbd snap rm testimg2@snap2
+    rbd flatten testimg2
+    rbd snap unprotect testimg1@snap1
+
+    remove_images
+}
+
+test_clone_v2() {
+    echo "testing clone v2..."
+    remove_images
+
+    rbd create $RBD_CREATE_ARGS -s 1 test1
+    rbd snap create test1@1
+    rbd clone --rbd-default-clone-format=1 test1@1 test2 && exit 1 || true
+    rbd clone --rbd-default-clone-format=2 test1@1 test2
+    rbd clone --rbd-default-clone-format=2 test1@1 test3
+
+    rbd snap protect test1@1
+    rbd clone --rbd-default-clone-format=1 test1@1 test4
+
+    rbd children test1@1 | sort | tr '\n' ' ' | grep -E "test2.*test3.*test4"
+
+    rbd remove test4
+    rbd snap unprotect test1@1
+
+    rbd snap remove test1@1
+    rbd snap list --all test1 | grep -E "trash[ ]*$"
+
+    rbd snap create test1@2
+    rbd rm test1 2>&1 | grep 'image has snapshots'
+
+    rbd snap rm test1@2
+    rbd rm test1 2>&1 | grep 'linked clones'
+
+    rbd rm test3
+    rbd rm test1 2>&1 | grep 'linked clones'
+
+    rbd flatten test2
+    rbd rm test1
+    rbd rm test2
+}
+
+test_thick_provision() {
+    echo "testing thick provision..."
+    remove_images
+
+    # Try to create small and large thick-pro image and
+    # check actual size. (64M and 4G)
+
+    # Small thick-pro image test
+    rbd create $RBD_CREATE_ARGS --thick-provision -s 64M test1
+    count=0
+    ret=""
+    while [ $count -lt 10 ]
+    do
+        rbd du|grep test1|tr -s " "|cut -d " " -f 4-5|grep '^64 MiB' && ret=$?
+        if [ "$ret" = "0" ]
+        then
+            break;
+        fi
+        count=`expr $count + 1`
+        sleep 2
+    done
+    rbd du
+    if [ "$ret" != "0" ]
+    then
+        exit 1
+    fi
+    rbd rm test1
+    rbd ls | grep test1 | wc -l | grep '^0$'
+
+    # Large thick-pro image test
+    rbd create $RBD_CREATE_ARGS --thick-provision -s 4G test1
+    count=0
+    ret=""
+    while [ $count -lt 10 ]
+    do
+        rbd du|grep test1|tr -s " "|cut -d " " -f 4-5|grep '^4 GiB' && ret=$?
+        if [ "$ret" = "0" ]
+        then
+            break;
+        fi
+        count=`expr $count + 1`
+        sleep 2
+    done
+    rbd du
+    if [ "$ret" != "0" ]
+    then
+        exit 1
+    fi
+    rbd rm test1
+    rbd ls | grep test1 | wc -l | grep '^0$'
+}
+
+test_namespace() {
+    echo "testing namespace..."
+    remove_images
+
+    rbd namespace ls | wc -l | grep '^0$'
+    rbd namespace create rbd test1
+    rbd namespace create --pool rbd test2
+    rbd namespace create --namespace test3
+    expect_fail rbd namespace create rbd test3
+
+    rbd namespace list | grep 'test' | wc -l | grep '^3$'
+
+    expect_fail rbd namespace remove --pool rbd missing
+
+    rbd create rbd/test1/image1 --size 1G
+    rbd create --namespace test1 image2 --size 1G
+    expect_fail rbd namespace remove --pool rbd test1
+
+    rbd group create rbd/test1/group1
+    rbd group image add rbd/test1/group1 rbd/test1/image1
+    rbd group rm rbd/test1/group1
+
+    rbd trash move rbd/test1/image1
+    ID=`rbd trash --namespace test1 ls | cut -d ' ' -f 1`
+    rbd trash rm rbd/test1/${ID}
+
+    rbd remove rbd/test1/image2
+
+    rbd namespace remove --pool rbd test1
+    rbd namespace remove --namespace test3
+
+    rbd namespace list | grep 'test' | wc -l | grep '^1$'
+    rbd namespace remove rbd test2
+}
 
 test_pool_image_args
 test_rename
@@ -452,10 +661,16 @@ test_remove
 RBD_CREATE_ARGS=""
 test_others
 test_locking
+test_thick_provision
 RBD_CREATE_ARGS="--image-format 2"
 test_others
 test_locking
 test_clone
 test_trash
+test_purge
+test_deep_copy_clone
+test_clone_v2
+test_thick_provision
+test_namespace
 
 echo OK

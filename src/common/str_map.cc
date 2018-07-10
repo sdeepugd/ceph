@@ -14,8 +14,6 @@
  * 
  */
 
-#include <errno.h>
-
 #include "include/str_map.h"
 #include "include/str_list.h"
 
@@ -61,10 +59,10 @@ int get_json_str_map(
 string trim(const string& str) {
   size_t start = 0;
   size_t end = str.size() - 1;
-  while (isspace(str[start]) != 0 && start <= end) {
+  while (start <= end && isspace(str[start]) != 0) {
     ++start;
   }
-  while (isspace(str[end]) != 0 && start <= end) {
+  while (start <= end && isspace(str[end]) != 0) {
     --end;
   }
   if (start <= end) {

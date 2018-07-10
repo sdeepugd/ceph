@@ -13,6 +13,7 @@
 class Context;
 class ContextWQ;
 namespace librbd { class ImageCtx; }
+namespace librbd { class ImageOptions; }
 
 namespace rbd {
 namespace mirror {
@@ -26,20 +27,20 @@ public:
                                     const std::string &global_image_id,
                                     const std::string &remote_mirror_uuid,
                                     const std::string &local_image_name,
+				    const std::string &local_image_id,
                                     ImageCtxT *remote_image_ctx,
-				    std::string *local_image_id,
                                     Context *on_finish) {
     return new CreateImageRequest(local_io_ctx, work_queue, global_image_id,
                                   remote_mirror_uuid, local_image_name,
-                                  remote_image_ctx, local_image_id, on_finish);
+                                  local_image_id, remote_image_ctx, on_finish);
   }
 
   CreateImageRequest(librados::IoCtx &local_io_ctx, ContextWQ *work_queue,
                      const std::string &global_image_id,
                      const std::string &remote_mirror_uuid,
                      const std::string &local_image_name,
+		     const std::string &local_image_id,
                      ImageCtxT *remote_image_ctx,
-		     std::string *local_image_id,
                      Context *on_finish);
 
   void send();
@@ -86,8 +87,8 @@ private:
   std::string m_global_image_id;
   std::string m_remote_mirror_uuid;
   std::string m_local_image_name;
+  std::string m_local_image_id;
   ImageCtxT *m_remote_image_ctx;
-  std::string *m_local_image_id;
   Context *m_on_finish;
 
   librados::IoCtx m_remote_parent_io_ctx;
@@ -101,7 +102,6 @@ private:
   bufferlist m_out_bl;
   std::string m_parent_global_image_id;
   std::string m_parent_pool_name;
-  std::string m_parent_snap_name;
   int m_ret_val = 0;
 
   void create_image();
@@ -135,6 +135,8 @@ private:
   void finish(int r);
 
   int validate_parent();
+
+  void populate_image_options(librbd::ImageOptions* image_options);
 
 };
 

@@ -32,11 +32,11 @@
 struct ethernet_address {
   ethernet_address() {}
 
-  ethernet_address(const uint8_t *eaddr) {
+  explicit ethernet_address(const uint8_t *eaddr) {
     std::copy(eaddr, eaddr + 6, mac.begin());
   }
 
-  ethernet_address(std::initializer_list<uint8_t> eaddr) {
+  explicit ethernet_address(std::initializer_list<uint8_t> eaddr) {
     assert(eaddr.size() == mac.size());
     std::copy(eaddr.begin(), eaddr.end(), mac.begin());
   }
@@ -53,7 +53,7 @@ struct ethernet_address {
 inline bool operator==(const ethernet_address& a, const ethernet_address& b) {
   return a.mac == b.mac;
 }
-std::ostream& operator<<(std::ostream& os, ethernet_address ea);
+std::ostream& operator<<(std::ostream& os, const ethernet_address& ea);
 
 struct ethernet {
   using address = ethernet_address;

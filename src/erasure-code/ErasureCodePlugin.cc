@@ -23,8 +23,10 @@
 #include "common/errno.h"
 #include "include/str_list.h"
 
+using namespace std;
+
 #define PLUGIN_PREFIX "libec_"
-#if defined(DARWIN)
+#if defined(__APPLE__)
 #define PLUGIN_SUFFIX ".dylib"
 #else
 #define PLUGIN_SUFFIX ".so"

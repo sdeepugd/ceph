@@ -1,12 +1,18 @@
 #ifndef CEPH_RGW_SYNC_H
 #define CEPH_RGW_SYNC_H
 
-#include "rgw_coroutine.h"
-#include "rgw_http_client.h"
-#include "rgw_meta_sync_status.h"
+#include <atomic>
 
 #include "include/stringify.h"
 #include "common/RWLock.h"
+
+#include "rgw_coroutine.h"
+#include "rgw_http_client.h"
+#include "rgw_metadata.h"
+#include "rgw_meta_sync_status.h"
+#include "rgw_rados.h"
+#include "rgw_sync_trace.h"
+
 
 #define ERROR_LOGGER_SHARDS 32
 #define RGW_SYNC_ERROR_LOG_SHARD_PREFIX "sync.error-log"
@@ -37,8 +43,8 @@ struct rgw_mdlog_entry {
     name = le.name;
     timestamp = le.timestamp.to_real_time();
     try {
-      bufferlist::iterator iter = le.data.begin();
-      ::decode(log_data, iter);
+      auto iter = le.data.cbegin();
+      decode(log_data, iter);
     } catch (buffer::error& err) {
       return false;
     }
@@ -58,6 +64,7 @@ class RGWAsyncRadosProcessor;
 class RGWMetaSyncStatusManager;
 class RGWMetaSyncCR;
 class RGWRESTConn;
+class RGWSyncTraceManager;
 
 class RGWSyncErrorLogger {
   RGWRados *store;
@@ -65,7 +72,7 @@ class RGWSyncErrorLogger {
   vector<string> oids;
   int num_shards;
 
-  atomic_t counter;
+  std::atomic<int64_t> counter = { 0 };
 public:
   RGWSyncErrorLogger(RGWRados *_store, const string &oid_prefix, int _num_shards);
   RGWCoroutine *log_error_cr(const string& source_zone, const string& section, const string& name, uint32_t error_code, const string& message);
@@ -83,17 +90,17 @@ struct rgw_sync_error_info {
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(source_zone, bl);
-    ::encode(error_code, bl);
-    ::encode(message, bl);
+    encode(source_zone, bl);
+    encode(error_code, bl);
+    encode(message, bl);
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(source_zone, bl);
-    ::decode(error_code, bl);
-    ::decode(message, bl);
+    decode(source_zone, bl);
+    decode(error_code, bl);
+    decode(message, bl);
     DECODE_FINISH(bl);
   }
 
@@ -109,7 +116,7 @@ class RGWSyncBackoff {
 
   void update_wait_time();
 public:
-  RGWSyncBackoff(int _max_secs = DEFAULT_BACKOFF_MAX) : cur_wait(0), max_secs(_max_secs) {}
+  explicit RGWSyncBackoff(int _max_secs = DEFAULT_BACKOFF_MAX) : cur_wait(0), max_secs(_max_secs) {}
 
   void backoff_sleep();
   void reset() {
@@ -160,18 +167,19 @@ public:
 };
 
 struct RGWMetaSyncEnv {
-  CephContext *cct;
-  RGWRados *store;
-  RGWRESTConn *conn;
-  RGWAsyncRadosProcessor *async_rados;
-  RGWHTTPManager *http_manager;
-  RGWSyncErrorLogger *error_logger;
+  CephContext *cct{nullptr};
+  RGWRados *store{nullptr};
+  RGWRESTConn *conn{nullptr};
+  RGWAsyncRadosProcessor *async_rados{nullptr};
+  RGWHTTPManager *http_manager{nullptr};
+  RGWSyncErrorLogger *error_logger{nullptr};
+  RGWSyncTraceManager *sync_tracer{nullptr};
 
-  RGWMetaSyncEnv() : cct(NULL), store(NULL), conn(NULL), async_rados(NULL), http_manager(NULL), error_logger(NULL) {}
+  RGWMetaSyncEnv() {}
 
   void init(CephContext *_cct, RGWRados *_store, RGWRESTConn *_conn,
             RGWAsyncRadosProcessor *_async_rados, RGWHTTPManager *_http_manager,
-            RGWSyncErrorLogger *_error_logger);
+            RGWSyncErrorLogger *_error_logger, RGWSyncTraceManager *_sync_tracer);
 
   string shard_obj_name(int shard_id);
   string status_oid();
@@ -184,19 +192,21 @@ class RGWRemoteMetaLog : public RGWCoroutinesManager {
 
   RGWHTTPManager http_manager;
   RGWMetaSyncStatusManager *status_manager;
-  RGWSyncErrorLogger *error_logger;
+  RGWSyncErrorLogger *error_logger{nullptr};
+  RGWSyncTraceManager *sync_tracer{nullptr};
 
-  RGWMetaSyncCR *meta_sync_cr;
+  RGWMetaSyncCR *meta_sync_cr{nullptr};
 
   RGWSyncBackoff backoff;
 
   RGWMetaSyncEnv sync_env;
-  rgw_meta_sync_status sync_status;
 
   void init_sync_env(RGWMetaSyncEnv *env);
-  int store_sync_info();
+  int store_sync_info(const rgw_meta_sync_info& sync_info);
 
-  atomic_t going_down;
+  std::atomic<bool> going_down = { false };
+
+  RGWSyncTraceNodeRef tn;
 
 public:
   RGWRemoteMetaLog(RGWRados *_store, RGWAsyncRadosProcessor *async_rados,
@@ -204,7 +214,7 @@ public:
     : RGWCoroutinesManager(_store->ctx(), _store->get_cr_registry()),
       store(_store), conn(NULL), async_rados(async_rados),
       http_manager(store->ctx(), completion_mgr),
-      status_manager(_sm), error_logger(NULL), meta_sync_cr(NULL) {}
+      status_manager(_sm) {}
 
   ~RGWRemoteMetaLog() override;
 
@@ -214,7 +224,7 @@ public:
   int read_log_info(rgw_mdlog_info *log_info);
   int read_master_log_shards_info(const string& master_period, map<int, RGWMetadataLogInfo> *shards_info);
   int read_master_log_shards_next(const string& period, map<int, string> shard_markers, map<int, rgw_mdlog_shard_data> *result);
-  int read_sync_status();
+  int read_sync_status(rgw_meta_sync_status *sync_status);
   int init_sync_status();
   int run_sync();
 
@@ -223,7 +233,6 @@ public:
   RGWMetaSyncEnv& get_sync_env() {
     return sync_env;
   }
-  const rgw_meta_sync_status& get_sync_status() const { return sync_status; }
 };
 
 class RGWMetaSyncStatusManager {
@@ -257,13 +266,10 @@ public:
     : store(_store), master_log(store, async_rados, this),
       ts_to_shard_lock("ts_to_shard_lock") {}
   int init();
-  void finish();
 
-  const rgw_meta_sync_status& get_sync_status() const {
-    return master_log.get_sync_status();
+  int read_sync_status(rgw_meta_sync_status *sync_status) {
+    return master_log.read_sync_status(sync_status);
   }
-
-  int read_sync_status() { return master_log.read_sync_status(); }
   int init_sync_status() { return master_log.init_sync_status(); }
   int read_log_info(rgw_mdlog_info *log_info) {
     return master_log.read_log_info(log_info);
@@ -283,6 +289,36 @@ public:
   }
 };
 
+class RGWOrderCallCR : public RGWCoroutine
+{
+public:
+  RGWOrderCallCR(CephContext *cct) : RGWCoroutine(cct) {}
+
+  virtual void call_cr(RGWCoroutine *_cr) = 0;
+};
+
+class RGWLastCallerWinsCR : public RGWOrderCallCR
+{
+  RGWCoroutine *cr{nullptr};
+
+public:
+  explicit RGWLastCallerWinsCR(CephContext *cct) : RGWOrderCallCR(cct) {}
+  ~RGWLastCallerWinsCR() {
+    if (cr) {
+      cr->put();
+    }
+  }
+
+  int operate() override;
+
+  void call_cr(RGWCoroutine *_cr) override {
+    if (cr) {
+      cr->put();
+    }
+    cr = _cr;
+  }
+};
+
 template <class T, class K>
 class RGWSyncShardMarkerTrack {
   struct marker_entry {
@@ -299,16 +335,22 @@ class RGWSyncShardMarkerTrack {
   int window_size;
   int updates_since_flush;
 
+  RGWOrderCallCR *order_cr{nullptr};
 
 protected:
   typename std::set<K> need_retry_set;
 
   virtual RGWCoroutine *store_marker(const T& new_marker, uint64_t index_pos, const real_time& timestamp) = 0;
+  virtual RGWOrderCallCR *allocate_order_control_cr() = 0;
   virtual void handle_finish(const T& marker) { }
 
 public:
   RGWSyncShardMarkerTrack(int _window_size) : window_size(_window_size), updates_since_flush(0) {}
-  virtual ~RGWSyncShardMarkerTrack() {}
+  virtual ~RGWSyncShardMarkerTrack() {
+    if (order_cr) {
+      order_cr->put();
+    }
+  }
 
   bool start(const T& pos, int index_pos, const real_time& timestamp) {
     if (pending.find(pos) != pending.end()) {
@@ -375,7 +417,7 @@ public:
     --i;
     const T& high_marker = i->first;
     marker_entry& high_entry = i->second;
-    RGWCoroutine *cr = store_marker(high_marker, high_entry.pos, high_entry.timestamp);
+    RGWCoroutine *cr = order(store_marker(high_marker, high_entry.pos, high_entry.timestamp));
     finish_markers.erase(finish_markers.begin(), last);
     return cr;
   }
@@ -397,6 +439,24 @@ public:
 
   void reset_need_retry(const K& key) {
     need_retry_set.erase(key);
+  }
+
+  RGWCoroutine *order(RGWCoroutine *cr) {
+    /* either returns a new RGWLastWriteWinsCR, or update existing one, in which case it returns
+     * nothing and the existing one will call the cr
+     */
+    if (order_cr && order_cr->is_done()) {
+      order_cr->put();
+      order_cr = nullptr;
+    }
+    if (!order_cr) {
+      order_cr = allocate_order_control_cr();
+      order_cr->get();
+      order_cr->call_cr(cr);
+      return order_cr;
+    }
+    order_cr->call_cr(cr);
+    return nullptr; /* don't call it a second time */
   }
 };
 
@@ -423,18 +483,13 @@ class RGWMetaSyncSingleEntryCR : public RGWCoroutine {
 
   bool error_injection;
 
+  RGWSyncTraceNodeRef tn;
+
 public:
   RGWMetaSyncSingleEntryCR(RGWMetaSyncEnv *_sync_env,
-		           const string& _raw_key, const string& _entry_marker,
+                           const string& _raw_key, const string& _entry_marker,
                            const RGWMDLogStatus& _op_status,
-                           RGWMetaSyncShardMarkerTrack *_marker_tracker) : RGWCoroutine(_sync_env->cct),
-                                                      sync_env(_sync_env),
-						      raw_key(_raw_key), entry_marker(_entry_marker),
-                                                      op_status(_op_status),
-                                                      pos(0), sync_status(0),
-                                                      marker_tracker(_marker_tracker), tries(0) {
-    error_injection = (sync_env->cct->_conf->rgw_sync_meta_inject_err_probability > 0);
-  }
+                           RGWMetaSyncShardMarkerTrack *_marker_tracker, const RGWSyncTraceNodeRef& _tn_parent);
 
   int operate() override;
 };
@@ -455,5 +510,13 @@ public:
   int operate() override;
 };
 
+// MetaLogTrimCR factory function
+RGWCoroutine* create_meta_log_trim_cr(RGWRados *store, RGWHTTPManager *http,
+                                      int num_shards, utime_t interval);
+
+// factory function for mdlog trim via radosgw-admin
+RGWCoroutine* create_admin_meta_log_trim_cr(RGWRados *store,
+                                            RGWHTTPManager *http,
+                                            int num_shards);
 
 #endif

@@ -152,13 +152,9 @@ extern "C" int rados_conf_parse_env(rados_t cluster, const char *var) {
   librados::TestRadosClient *client =
     reinterpret_cast<librados::TestRadosClient*>(cluster);
   md_config_t *conf = client->cct()->_conf;
-  std::vector<const char*> args;
-  env_to_vec(args, var);
-  int ret = conf->parse_argv(args);
-  if (ret == 0) {
-    conf->apply_changes(NULL);
-  }
-  return ret;
+  conf->parse_env(var);
+  conf->apply_changes(NULL);
+  return 0;
 }
 
 extern "C" int rados_conf_read_file(rados_t cluster, const char *path) {
@@ -411,6 +407,12 @@ int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 }
 
 int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
+                       ObjectReadOperation *op, int flags,
+                       bufferlist *pbl, const blkin_trace_info *trace_info) {
+  return aio_operate(oid, c, op, flags, pbl);
+}
+
+int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
                        ObjectWriteOperation *op) {
   TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
   TestObjectOperationImpl *ops = reinterpret_cast<TestObjectOperationImpl*>(op->impl);
@@ -419,7 +421,8 @@ int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 
 int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
                        ObjectWriteOperation *op, snap_t seq,
-                       std::vector<snap_t>& snaps) {
+                       std::vector<snap_t>& snaps, int flags,
+                       const blkin_trace_info *trace_info) {
   TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
   TestObjectOperationImpl *ops = reinterpret_cast<TestObjectOperationImpl*>(op->impl);
 
@@ -429,7 +432,20 @@ int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
     snv[i] = snaps[i];
   SnapContext snapc(seq, snv);
 
-  return ctx->aio_operate(oid, *ops, c->pc, &snapc, 0);
+  return ctx->aio_operate(oid, *ops, c->pc, &snapc, flags);
+}
+
+int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
+                       ObjectWriteOperation *op, snap_t seq,
+                       std::vector<snap_t>& snaps) {
+  return aio_operate(oid, c, op, seq, snaps, 0, nullptr);
+}
+
+int IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
+                       ObjectWriteOperation *op, snap_t seq,
+                       std::vector<snap_t>& snaps,
+		       const blkin_trace_info *trace_info) {
+  return aio_operate(oid, c, op, seq, snaps, 0, trace_info);
 }
 
 int IoCtx::aio_remove(const std::string& oid, AioCompletion *c) {
@@ -676,6 +692,57 @@ int IoCtx::writesame(const std::string& oid, bufferlist& bl, size_t len,
                      ctx->get_snap_context()));
 }
 
+int IoCtx::cmpext(const std::string& oid, uint64_t off, bufferlist& cmp_bl) {
+  TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
+  return ctx->execute_operation(
+    oid, boost::bind(&TestIoCtxImpl::cmpext, _1, _2, off, cmp_bl));
+}
+
+int IoCtx::application_enable(const std::string& app_name, bool force) {
+  return 0;
+}
+
+int IoCtx::application_enable_async(const std::string& app_name,
+                                    bool force, PoolAsyncCompletion *c) {
+  return -EOPNOTSUPP;
+}
+
+int IoCtx::application_list(std::set<std::string> *app_names) {
+  return -EOPNOTSUPP;
+}
+
+int IoCtx::application_metadata_get(const std::string& app_name,
+                                    const std::string &key,
+                                    std::string *value) {
+  return -EOPNOTSUPP;
+}
+
+int IoCtx::application_metadata_set(const std::string& app_name,
+                                    const std::string &key,
+                                    const std::string& value) {
+  return -EOPNOTSUPP;
+}
+
+int IoCtx::application_metadata_remove(const std::string& app_name,
+                                       const std::string &key) {
+  return -EOPNOTSUPP;
+}
+
+int IoCtx::application_metadata_list(const std::string& app_name,
+                                     std::map<std::string, std::string> *values) {
+  return -EOPNOTSUPP;
+}
+
+void IoCtx::set_namespace(const std::string& nspace) {
+  TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
+  ctx->set_namespace(nspace);
+}
+
+std::string IoCtx::get_namespace() const {
+  TestIoCtxImpl *ctx = reinterpret_cast<TestIoCtxImpl*>(io_ctx_impl);
+  return ctx->get_namespace();
+}
+
 static int save_operation_result(int result, int *pval) {
   if (pval != NULL) {
     *pval = result;
@@ -715,6 +782,16 @@ void ObjectOperation::set_op_flags2(int flags) {
 size_t ObjectOperation::size() {
   TestObjectOperationImpl *o = reinterpret_cast<TestObjectOperationImpl*>(impl);
   return o->ops.size();
+}
+
+void ObjectOperation::cmpext(uint64_t off, bufferlist& cmp_bl, int *prval) {
+  TestObjectOperationImpl *o = reinterpret_cast<TestObjectOperationImpl*>(impl);
+  ObjectOperationTestImpl op = boost::bind(&TestIoCtxImpl::cmpext, _1, _2, off, cmp_bl);
+  if (prval != NULL) {
+    op = boost::bind(save_operation_result,
+                     boost::bind(op, _1, _2, _3, _4), prval);
+  }
+  o->ops.push_back(op);
 }
 
 void ObjectReadOperation::list_snaps(snap_set_t *out_snaps, int *prval) {
@@ -822,7 +899,7 @@ void ObjectWriteOperation::set_alloc_hint(uint64_t expected_object_size,
                                           uint64_t expected_write_size) {
   TestObjectOperationImpl *o = reinterpret_cast<TestObjectOperationImpl*>(impl);
   o->ops.push_back(boost::bind(&TestIoCtxImpl::set_alloc_hint, _1, _2,
-			       expected_object_size, expected_write_size));
+			       expected_object_size, expected_write_size, _4));
 }
 
 
@@ -856,7 +933,7 @@ void ObjectWriteOperation::writesame(uint64_t off, uint64_t len, const bufferlis
 
 void ObjectWriteOperation::zero(uint64_t off, uint64_t len) {
   TestObjectOperationImpl *o = reinterpret_cast<TestObjectOperationImpl*>(impl);
-  o->ops.push_back(boost::bind(&TestIoCtxImpl::zero, _1, _2, off, len));
+  o->ops.push_back(boost::bind(&TestIoCtxImpl::zero, _1, _2, off, len, _4));
 }
 
 Rados::Rados() : client(NULL) {
@@ -943,6 +1020,13 @@ uint64_t Rados::get_instance_id() {
   return impl->get_instance_id();
 }
 
+int Rados::get_min_compatible_client(int8_t* min_compat_client,
+                                     int8_t* require_min_compat_client) {
+  TestRadosClient *impl = reinterpret_cast<TestRadosClient*>(client);
+  return impl->get_min_compatible_client(min_compat_client,
+                                         require_min_compat_client);
+}
+
 int Rados::init(const char * const id) {
   return rados_create(reinterpret_cast<rados_t *>(&client), id);
 }
@@ -979,6 +1063,18 @@ int Rados::mon_command(std::string cmd, const bufferlist& inbl,
   std::vector<std::string> cmds;
   cmds.push_back(cmd);
   return impl->mon_command(cmds, inbl, outbl, outs);
+}
+
+int Rados::service_daemon_register(const std::string& service,
+                                   const std::string& name,
+                                   const std::map<std::string,std::string>& metadata) {
+  TestRadosClient *impl = reinterpret_cast<TestRadosClient*>(client);
+  return impl->service_daemon_register(service, name, metadata);
+}
+
+int Rados::service_daemon_update_status(std::map<std::string,std::string>&& status) {
+  TestRadosClient *impl = reinterpret_cast<TestRadosClient*>(client);
+  return impl->service_daemon_update_status(std::move(status));
 }
 
 int Rados::pool_create(const char *name) {
@@ -1072,6 +1168,7 @@ int cls_get_request_origin(cls_method_context_t hctx, entity_inst_t *origin) {
     ctx->io_ctx_impl->get_rados_client();
 
   struct sockaddr_in sin;
+  memset(&sin, 0, sizeof(sin));
   sin.sin_family = AF_INET;
   sin.sin_port = 0;
   inet_pton(AF_INET, "127.0.0.1", &sin.sin_addr);
@@ -1109,27 +1206,22 @@ int cls_cxx_getxattrs(cls_method_context_t hctx, std::map<string, bufferlist> *a
 }
 
 int cls_cxx_map_get_keys(cls_method_context_t hctx, const string &start_obj,
-                         uint64_t max_to_get, std::set<string> *keys) {
+                         uint64_t max_to_get, std::set<string> *keys, bool *more) {
   librados::TestClassHandler::MethodContext *ctx =
     reinterpret_cast<librados::TestClassHandler::MethodContext*>(hctx);
 
   keys->clear();
   std::map<string, bufferlist> vals;
-  std::string last_key = start_obj;
-  do {
-    vals.clear();
-    int r = ctx->io_ctx_impl->omap_get_vals(ctx->oid, last_key, "", 1024,
-                                            &vals);
-    if (r < 0) {
-      return r;
-    }
+  int r = ctx->io_ctx_impl->omap_get_vals2(ctx->oid, start_obj, "", max_to_get,
+                                           &vals, more);
+  if (r < 0) {
+    return r;
+  }
 
-    for (std::map<string, bufferlist>::iterator it = vals.begin();
-        it != vals.end(); ++it) {
-      last_key = it->first;
-      keys->insert(last_key);
-    }
-  } while (!vals.empty());
+  for (std::map<string, bufferlist>::iterator it = vals.begin();
+       it != vals.end(); ++it) {
+    keys->insert(it->first);
+  }
   return keys->size();
 }
 
@@ -1155,11 +1247,11 @@ int cls_cxx_map_get_val(cls_method_context_t hctx, const string &key,
 
 int cls_cxx_map_get_vals(cls_method_context_t hctx, const string &start_obj,
                          const string &filter_prefix, uint64_t max_to_get,
-                         std::map<string, bufferlist> *vals) {
+                         std::map<string, bufferlist> *vals, bool *more) {
   librados::TestClassHandler::MethodContext *ctx =
     reinterpret_cast<librados::TestClassHandler::MethodContext*>(hctx);
-  int r = ctx->io_ctx_impl->omap_get_vals(ctx->oid, start_obj, filter_prefix,
-					  max_to_get, vals);
+  int r = ctx->io_ctx_impl->omap_get_vals2(ctx->oid, start_obj, filter_prefix,
+					  max_to_get, vals, more);
   if (r < 0) {
     return r;
   }
@@ -1272,7 +1364,7 @@ int cls_log(int level, const char *format, ...) {
     int n = vsnprintf(buf, size, format, ap);
     va_end(ap);
     if ((n > -1 && n < size) || size > 8196) {
-      dout(level) << buf << dendl;
+      dout(ceph::dout::need_dynamic(level)) << buf << dendl;
       return n;
     }
     size *= 2;

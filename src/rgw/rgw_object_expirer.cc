@@ -6,7 +6,6 @@
 #include <sstream>
 #include <string>
 
-using namespace std;
 
 #include "auth/Crypto.h"
 
@@ -30,7 +29,6 @@ using namespace std;
 #include "rgw_log.h"
 #include "rgw_formats.h"
 #include "rgw_usage.h"
-#include "rgw_replica_log.h"
 #include "rgw_object_expirer_core.h"
 
 #define dout_subsys ceph_subsys_rgw
@@ -58,7 +56,14 @@ int main(const int argc, const char **argv)
 {
   vector<const char *> args;
   argv_to_vec(argc, argv, args);
-  env_to_vec(args);
+  if (args.empty()) {
+    cerr << argv[0] << ": -h or --help for usage" << std::endl;
+    exit(1);
+  }
+  if (ceph_argparse_need_usage(args)) {
+    usage();
+    exit(0);
+  }
 
   auto cct = global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT,
 			 CODE_ENVIRONMENT_DAEMON,
@@ -67,9 +72,6 @@ int main(const int argc, const char **argv)
   for (std::vector<const char *>::iterator i = args.begin(); i != args.end(); ) {
     if (ceph_argparse_double_dash(args, i)) {
       break;
-    } else if (ceph_argparse_flag(args, i, "-h", "--help", (char*)NULL)) {
-      usage();
-      return 0;
     }
   }
 
@@ -79,7 +81,7 @@ int main(const int argc, const char **argv)
 
   common_init_finish(g_ceph_context);
 
-  store = RGWStoreManager::get_storage(g_ceph_context, false, false, false, false);
+  store = RGWStoreManager::get_storage(g_ceph_context, false, false, false, false, false);
   if (!store) {
     std::cerr << "couldn't init storage provider" << std::endl;
     return EIO;

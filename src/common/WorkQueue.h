@@ -15,12 +15,12 @@
 #ifndef CEPH_WORKQUEUE_H
 #define CEPH_WORKQUEUE_H
 
-#include "Mutex.h"
 #include "Cond.h"
-#include "Thread.h"
 #include "include/unordered_map.h"
 #include "common/config_obs.h"
 #include "common/HeartbeatMap.h"
+
+#include <atomic>
 
 class CephContext;
 
@@ -43,8 +43,8 @@ public:
     friend class ThreadPool;
     CephContext *cct;
     heartbeat_handle_d *hb;
-    time_t grace;
-    time_t suicide_grace;
+    ceph::coarse_mono_clock::rep grace;
+    ceph::coarse_mono_clock::rep suicide_grace;
   public:
     TPHandle(
       CephContext *cct,
@@ -90,7 +90,7 @@ private:
   const char **get_tracked_conf_keys() const override {
     return _conf_keys;
   }
-  void handle_conf_change(const struct md_config_t *conf,
+  void handle_conf_change(const md_config_t *conf,
 			  const std::set <std::string> &changed) override;
 
 public:
@@ -374,6 +374,9 @@ public:
     PointerWQ(string n, time_t ti, time_t sti, ThreadPool* p)
       : WorkQueue_(std::move(n), ti, sti), m_pool(p), m_processing(0) {
     }
+    void register_work_queue() {
+      m_pool->add_work_queue(this);
+    }
     void _clear() override {
       assert(m_pool->_lock.is_locked());
       m_items.clear();
@@ -577,7 +580,7 @@ public:
   ContextWQ(const string &name, time_t ti, ThreadPool *tp)
     : ThreadPool::PointerWQ<Context>(name, ti, 0, tp),
       m_lock("ContextWQ::m_lock") {
-    tp->add_work_queue(this);
+    this->register_work_queue();
   }
 
   void queue(Context *ctx, int result = 0) {
@@ -623,9 +626,11 @@ class ShardedThreadPool {
   Cond shardedpool_cond;
   Cond wait_cond;
   uint32_t num_threads;
-  atomic_t stop_threads;
-  atomic_t pause_threads;
-  atomic_t drain_threads;
+
+  std::atomic<bool> stop_threads = { false };
+  std::atomic<bool> pause_threads = { false };
+  std::atomic<bool> drain_threads = { false };
+
   uint32_t num_paused;
   uint32_t num_drained;
 
@@ -640,6 +645,7 @@ public:
 
     virtual void _process(uint32_t thread_index, heartbeat_handle_d *hb ) = 0;
     virtual void return_waiting_threads() = 0;
+    virtual void stop_return_waiting_threads() = 0;
     virtual bool is_shard_empty(uint32_t thread_index) = 0;
   };      
 
@@ -649,8 +655,8 @@ public:
     ShardedThreadPool* sharded_pool;
 
   protected:
-    virtual void _enqueue(T) = 0;
-    virtual void _enqueue_front(T) = 0;
+    virtual void _enqueue(T&&) = 0;
+    virtual void _enqueue_front(T&&) = 0;
 
 
   public:
@@ -660,11 +666,11 @@ public:
     }
     ~ShardedWQ() override {}
 
-    void queue(T item) {
-      _enqueue(item);
+    void queue(T&& item) {
+      _enqueue(std::move(item));
     }
-    void queue_front(T item) {
-      _enqueue_front(item);
+    void queue_front(T&& item) {
+      _enqueue_front(std::move(item));
     }
     void drain() {
       sharded_pool->drain();

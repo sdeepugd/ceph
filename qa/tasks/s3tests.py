@@ -10,8 +10,6 @@ import os
 import random
 import string
 
-import util.rgw as rgw_utils
-
 from teuthology import misc as teuthology
 from teuthology import contextutil
 from teuthology.config import config as teuth_config
@@ -19,99 +17,6 @@ from teuthology.orchestra import run
 from teuthology.orchestra.connection import split_user
 
 log = logging.getLogger(__name__)
-
-def extract_sync_client_data(ctx, client_name):
-    """
-    Extract synchronized client rgw zone and rgw region information.
-
-    :param ctx: Context passed to the s3tests task
-    :param name: Name of client that we are synching with
-    """
-    return_region_name = None
-    return_dict = None
-    cluster_name, daemon_type, client_id = teuthology.split_role(client_name)
-    client = ctx.ceph[cluster_name].conf.get(client_name, None)
-    if client:
-        current_client_zone = client.get('rgw zone', None)
-        if current_client_zone:
-            (endpoint_host, endpoint_port) = ctx.rgw.role_endpoints.get(client_name, (None, None))
-            # pull out the radosgw_agent stuff
-            regions = ctx.rgw.regions
-            for region in regions:
-                log.debug('jbuck, region is {region}'.format(region=region))
-                region_data = ctx.rgw.regions[region]
-                log.debug('region data is {region}'.format(region=region_data))
-                zones = region_data['zones']
-                for zone in zones:
-                    if current_client_zone in zone:
-                        return_region_name = region
-                        return_dict = dict()
-                        return_dict['api_name'] = region_data['api name']
-                        return_dict['is_master'] = region_data['is master']
-                        return_dict['port'] = endpoint_port
-                        return_dict['host'] = endpoint_host
-
-                        # The s3tests expect the sync_agent_[addr|port} to be
-                        # set on the non-master node for some reason
-                        if not region_data['is master']:
-                            (rgwagent_host, rgwagent_port) = ctx.radosgw_agent.endpoint
-                            (return_dict['sync_agent_addr'], _) = ctx.rgw.role_endpoints[rgwagent_host]
-                            return_dict['sync_agent_port'] = rgwagent_port
-
-        else: #if client_zone:
-            log.debug('No zone info for {host}'.format(host=client_name))
-    else: # if client
-        log.debug('No ceph conf for {host}'.format(host=client_name))
-
-    return return_region_name, return_dict
-
-def update_conf_with_region_info(ctx, config, s3tests_conf):
-    """
-    Scan for a client (passed in s3tests_conf) that is an s3agent
-    with which we can sync.  Update information in local conf file
-    if such a client is found.
-    """
-    for key in s3tests_conf.keys():
-        # we'll assume that there's only one sync relationship (source / destination) with client.X
-        # as the key for now
-
-        # Iterate through all of the radosgw_agent (rgwa) configs and see if a
-        # given client is involved in a relationship.
-        # If a given client isn't, skip it
-        this_client_in_rgwa_config = False
-        for rgwa in ctx.radosgw_agent.config.keys():
-            rgwa_data = ctx.radosgw_agent.config[rgwa]
-
-            if key in rgwa_data['src'] or key in rgwa_data['dest']:
-                this_client_in_rgwa_config = True
-                log.debug('{client} is in an radosgw-agent sync relationship'.format(client=key))
-                radosgw_sync_data = ctx.radosgw_agent.config[key]
-                break
-        if not this_client_in_rgwa_config:
-            log.debug('{client} is NOT in an radosgw-agent sync relationship'.format(client=key))
-            continue
-
-        source_client = radosgw_sync_data['src']
-        dest_client = radosgw_sync_data['dest']
-
-        # #xtract the pertinent info for the source side
-        source_region_name, source_region_dict = extract_sync_client_data(ctx, source_client)
-        log.debug('\t{key} source_region {source_region} source_dict {source_dict}'.format
-            (key=key,source_region=source_region_name,source_dict=source_region_dict))
-
-        # The source *should* be the master region, but test anyway and then set it as the default region
-        if source_region_dict['is_master']:
-            log.debug('Setting {region} as default_region'.format(region=source_region_name))
-            s3tests_conf[key]['fixtures'].setdefault('default_region', source_region_name)
-
-        # Extract the pertinent info for the destination side
-        dest_region_name, dest_region_dict = extract_sync_client_data(ctx, dest_client)
-        log.debug('\t{key} dest_region {dest_region} dest_dict {dest_dict}'.format
-            (key=key,dest_region=dest_region_name,dest_dict=dest_region_dict))
-
-        # now add these regions to the s3tests_conf object
-        s3tests_conf[key]['region {region_name}'.format(region_name=source_region_name)] = source_region_dict
-        s3tests_conf[key]['region {region_name}'.format(region_name=dest_region_name)] = dest_region_dict
 
 @contextlib.contextmanager
 def download(ctx, config):
@@ -141,11 +46,12 @@ def download(ctx, config):
         else:
             log.info("Using branch '%s' for s3tests", branch)
         sha1 = cconf.get('sha1')
+        git_remote = cconf.get('git_remote', None) or teuth_config.ceph_git_base_url
         ctx.cluster.only(client).run(
             args=[
                 'git', 'clone',
                 '-b', branch,
-                teuth_config.ceph_git_base_url + 's3-tests.git',
+                git_remote + 's3-tests.git',
                 '{tdir}/s3-tests'.format(tdir=testdir),
                 ],
             )
@@ -182,6 +88,9 @@ def _config_user(s3tests_conf, section, user):
     s3tests_conf[section].setdefault('display_name', 'Mr. {user}'.format(user=user))
     s3tests_conf[section].setdefault('access_key', ''.join(random.choice(string.uppercase) for i in xrange(20)))
     s3tests_conf[section].setdefault('secret_key', base64.b64encode(os.urandom(40)))
+    s3tests_conf[section].setdefault('totp_serial', ''.join(random.choice(string.digits) for i in xrange(10)))
+    s3tests_conf[section].setdefault('totp_seed', base64.b32encode(os.urandom(40)))
+    s3tests_conf[section].setdefault('totp_seconds', '5')
 
 
 @contextlib.contextmanager
@@ -192,7 +101,7 @@ def create_users(ctx, config):
     assert isinstance(config, dict)
     log.info('Creating rgw users...')
     testdir = teuthology.get_testdir(ctx)
-    users = {'s3 main': 'foo', 's3 alt': 'bar'}
+    users = {'s3 main': 'foo', 's3 alt': 'bar', 's3 tenant': 'testx$tenanteduser'}
     for client in config['clients']:
         s3tests_conf = config['s3tests_conf'][client]
         s3tests_conf.setdefault('fixtures', {})
@@ -215,6 +124,23 @@ def create_users(ctx, config):
                     '--access-key', s3tests_conf[section]['access_key'],
                     '--secret', s3tests_conf[section]['secret_key'],
                     '--email', s3tests_conf[section]['email'],
+                    '--cluster', cluster_name,
+                ],
+            )
+            ctx.cluster.only(client).run(
+                args=[
+                    'adjust-ulimits',
+                    'ceph-coverage',
+                    '{tdir}/archive/coverage'.format(tdir=testdir),
+                    'radosgw-admin',
+                    '-n', client_with_id,
+                    'mfa', 'create',
+                    '--uid', s3tests_conf[section]['user_id'],
+                    '--totp-serial', s3tests_conf[section]['totp_serial'],
+                    '--totp-seed', s3tests_conf[section]['totp_seed'],
+                    '--totp-seconds', s3tests_conf[section]['totp_seconds'],
+                    '--totp-window', '8',
+                    '--totp-seed-type', 'base32',
                     '--cluster', cluster_name,
                 ],
             )
@@ -313,21 +239,6 @@ def configure(ctx, config):
                 )
 
 @contextlib.contextmanager
-def sync_users(ctx, config):
-    """
-    Sync this user.
-    """
-    assert isinstance(config, dict)
-    # do a full sync if this is a multi-region test
-    if rgw_utils.multi_region_enabled(ctx):
-        log.debug('Doing a full sync')
-        rgw_utils.radosgw_agent_sync_all(ctx)
-    else:
-        log.debug('Not a multi-region config; skipping the metadata sync')
-
-    yield
-
-@contextlib.contextmanager
 def run_tests(ctx, config):
     """
     Run the s3tests after everything is set up.
@@ -337,13 +248,22 @@ def run_tests(ctx, config):
     """
     assert isinstance(config, dict)
     testdir = teuthology.get_testdir(ctx)
-    attrs = ["!fails_on_rgw"]
-    if not ctx.rgw.use_fastcgi:
-        attrs.append("!fails_on_mod_proxy_fcgi")
+    # civetweb > 1.8 && beast parsers are strict on rfc2616
+    attrs = ["!fails_on_rgw", "!lifecycle_expiration", "!fails_strict_rfc2616"]
     for client, client_config in config.iteritems():
+        (remote,) = ctx.cluster.only(client).remotes.keys()
         args = [
             'S3TEST_CONF={tdir}/archive/s3-tests.{client}.conf'.format(tdir=testdir, client=client),
-            'BOTO_CONFIG={tdir}/boto.cfg'.format(tdir=testdir),
+            'BOTO_CONFIG={tdir}/boto.cfg'.format(tdir=testdir)
+            ]
+        # the 'requests' library comes with its own ca bundle to verify ssl
+        # certificates - override that to use the system's ca bundle, which
+        # is where the ssl task installed this certificate
+        if remote.os.package_type == 'deb':
+            args += ['REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt']
+        else:
+            args += ['REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt']
+        args += [
             '{tdir}/s3-tests/virtualenv/bin/nosetests'.format(tdir=testdir),
             '-w',
             '{tdir}/s3-tests'.format(tdir=testdir),
@@ -353,7 +273,7 @@ def run_tests(ctx, config):
         if client_config is not None and 'extra_args' in client_config:
             args.extend(client_config['extra_args'])
 
-        ctx.cluster.only(client).run(
+        remote.run(
             args=args,
             label="s3 tests against rgw"
             )
@@ -381,13 +301,15 @@ def scan_for_leaked_encryption_keys(ctx, config):
         for client, client_config in config.iteritems():
             if not client_config.get('scan_for_encryption_keys', True):
                 continue
+            cluster_name, daemon_type, client_id = teuthology.split_role(client)
+            client_with_cluster = '.'.join((cluster_name, daemon_type, client_id))
             (remote,) = ctx.cluster.only(client).remotes.keys()
             proc = remote.run(
                 args=[
                     'grep',
                     '--binary-files=text',
                     s3test_customer_key,
-                    '/var/log/ceph/rgw.{client}.log'.format(client=client),
+                    '/var/log/ceph/rgw.{client}.log'.format(client=client_with_cluster),
                 ],
                 wait=False,
                 check_status=False,
@@ -441,6 +363,7 @@ def task(ctx, config):
             client.1:
               extra_args: ['--exclude', 'test_100_continue']
     """
+    assert hasattr(ctx, 'rgw'), 's3tests must run after the rgw task'
     assert config is None or isinstance(config, list) \
         or isinstance(config, dict), \
         "task s3tests only supports a list or dictionary for configuration"
@@ -463,23 +386,24 @@ def task(ctx, config):
 
     s3tests_conf = {}
     for client in clients:
+        endpoint = ctx.rgw.role_endpoints.get(client)
+        assert endpoint, 's3tests: no rgw endpoint for {}'.format(client)
+
         s3tests_conf[client] = ConfigObj(
             indent_type='',
             infile={
                 'DEFAULT':
                     {
-                    'port'      : 7280,
-                    'is_secure' : 'no',
+                    'port'      : endpoint.port,
+                    'is_secure' : 'yes' if endpoint.cert else 'no',
+                    'api_name'  : 'default',
                     },
                 'fixtures' : {},
                 's3 main'  : {},
                 's3 alt'   : {},
+		's3 tenant': {},
                 }
             )
-
-    # Only attempt to add in the region info if there's a radosgw_agent configured
-    if hasattr(ctx, 'radosgw_agent'):
-        update_conf_with_region_info(ctx, config, s3tests_conf)
 
     with contextutil.nested(
         lambda: download(ctx=ctx, config=config),
@@ -487,7 +411,6 @@ def task(ctx, config):
                 clients=clients,
                 s3tests_conf=s3tests_conf,
                 )),
-        lambda: sync_users(ctx=ctx, config=config),
         lambda: configure(ctx=ctx, config=dict(
                 clients=config,
                 s3tests_conf=s3tests_conf,

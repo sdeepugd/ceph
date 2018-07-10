@@ -16,7 +16,6 @@
 #define CEPH_COMMON_STRTOL_H
 
 #include <string>
-#include <limits>
 extern "C" {
 #include <stdint.h>
 }
@@ -28,6 +27,11 @@ int strict_strtol(const char *str, int base, std::string *err);
 double strict_strtod(const char *str, std::string *err);
 
 float strict_strtof(const char *str, std::string *err);
+
+uint64_t strict_iecstrtoll(const char *str, std::string *err);
+
+template<typename T>
+T strict_iec_cast(const char *str, std::string *err);
 
 uint64_t strict_sistrtoll(const char *str, std::string *err);
 

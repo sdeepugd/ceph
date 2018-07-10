@@ -134,6 +134,7 @@ protected:
                                         Context *on_finish);
   virtual void post_release_lock_handler(bool shutting_down, int r,
                                           Context *on_finish);
+  virtual void post_reacquire_lock_handler(int r, Context *on_finish);
 
   void execute_next_action();
 
@@ -239,6 +240,8 @@ private:
   void send_acquire_lock();
   void handle_pre_acquire_lock(int r);
   void handle_acquire_lock(int r);
+  void handle_no_op_reacquire_lock(int r);
+
   void handle_post_acquire_lock(int r);
   void revert_to_unlock_state(int r);
 

@@ -20,8 +20,8 @@
 class MPoolOpReply : public PaxosServiceMessage {
 public:
   uuid_d fsid;
-  __u32 replyCode;
-  epoch_t epoch;
+  __u32 replyCode = 0;
+  epoch_t epoch = 0;
   bufferlist response_data;
 
   MPoolOpReply() : PaxosServiceMessage(CEPH_MSG_POOLOP_REPLY, 0)
@@ -53,26 +53,27 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
+    using ceph::encode;
     paxos_encode();
-    ::encode(fsid, payload);
-    ::encode(replyCode, payload);
-    ::encode(epoch, payload);
+    encode(fsid, payload);
+    encode(replyCode, payload);
+    encode(epoch, payload);
     if (response_data.length()) {
-      ::encode(true, payload);
-      ::encode(response_data, payload);
+      encode(true, payload);
+      encode(response_data, payload);
     } else
-      ::encode(false, payload);
+      encode(false, payload);
   }
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
+    auto p = payload.cbegin();
     paxos_decode(p);
-    ::decode(fsid, p);
-    ::decode(replyCode, p);
-    ::decode(epoch, p);
+    decode(fsid, p);
+    decode(replyCode, p);
+    decode(epoch, p);
     bool has_response_data;
-    ::decode(has_response_data, p);
+    decode(has_response_data, p);
     if (has_response_data) {
-      ::decode(response_data, p);
+      decode(response_data, p);
     }
   }
 };

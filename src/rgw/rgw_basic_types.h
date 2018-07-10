@@ -1,3 +1,5 @@
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
+// vim: ts=8 sw=2 smarttab
 #ifndef CEPH_RGW_BASIC_TYPES_H
 #define CEPH_RGW_BASIC_TYPES_H
 
@@ -18,17 +20,21 @@ struct rgw_user {
     : tenant(tenant),
       id(id) {
   }
+  rgw_user(std::string&& tenant, std::string&& id)
+    : tenant(std::move(tenant)),
+      id(std::move(id)) {
+  }
 
   void encode(bufferlist& bl) const {
     ENCODE_START(1, 1, bl);
-    ::encode(tenant, bl);
-    ::encode(id, bl);
+    encode(tenant, bl);
+    encode(id, bl);
     ENCODE_FINISH(bl);
   }
-  void decode(bufferlist::iterator& bl) {
+  void decode(bufferlist::const_iterator& bl) {
     DECODE_START(1, bl);
-    ::decode(tenant, bl);
-    ::decode(id, bl);
+    decode(tenant, bl);
+    decode(id, bl);
     DECODE_FINISH(bl);
   }
 
@@ -100,6 +106,79 @@ struct rgw_user {
 };
 WRITE_CLASS_ENCODER(rgw_user)
 
+// Represents an identity. This is more wide-ranging than a
+// 'User'. Its purposes is to be matched against by an
+// IdentityApplier. The internal representation will doubtless change as
+// more types are added. We may want to expose the type enum and make
+// the member public so people can switch/case on it.
+
+namespace rgw {
+namespace auth {
+class Principal {
+  enum types { User, Role, Tenant, Wildcard };
+  types t;
+  rgw_user u;
+
+  explicit Principal(types t)
+    : t(t) {}
+
+  Principal(types t, std::string&& n, std::string i)
+    : t(t), u(std::move(n), std::move(i)) {}
+
+public:
+
+  static Principal wildcard() {
+    return Principal(Wildcard);
+  }
+
+  static Principal user(std::string&& t, std::string&& u) {
+    return Principal(User, std::move(t), std::move(u));
+  }
+
+  static Principal role(std::string&& t, std::string&& u) {
+    return Principal(Role, std::move(t), std::move(u));
+  }
+
+  static Principal tenant(std::string&& t) {
+    return Principal(Tenant, std::move(t), {});
+  }
+
+  bool is_wildcard() const {
+    return t == Wildcard;
+  }
+
+  bool is_user() const {
+    return t == User;
+  }
+
+  bool is_role() const {
+    return t == Role;
+  }
+
+  bool is_tenant() const {
+    return t == Tenant;
+  }
+
+  const std::string& get_tenant() const {
+    return u.tenant;
+  }
+
+  const std::string& get_id() const {
+    return u.id;
+  }
+
+  bool operator ==(const Principal& o) const {
+    return (t == o.t) && (u == o.u);
+  }
+
+  bool operator <(const Principal& o) const {
+    return (t < o.t) || ((t == o.t) && (u < o.u));
+  }
+};
+
+std::ostream& operator <<(std::ostream& m, const Principal& p);
+}
+}
 
 class JSONObj;
 

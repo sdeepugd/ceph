@@ -2,7 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "tools/rbd_mirror/pool_watcher/RefreshImagesRequest.h"
-#include "common/dout.h"
+#include "common/debug.h"
 #include "common/errno.h"
 #include "cls/rbd/cls_rbd_client.h"
 #include "librbd/Utils.h"
@@ -49,7 +49,7 @@ void RefreshImagesRequest<I>::handle_mirror_image_list(int r) {
 
   std::map<std::string, std::string> ids;
   if (r == 0) {
-    bufferlist::iterator it = m_out_bl.begin();
+    auto it = m_out_bl.cbegin();
     r = librbd::cls_client::mirror_image_list_finish(&it, &ids);
   }
 

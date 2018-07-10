@@ -15,6 +15,7 @@
 #define CEPH_MON_CONFIG_KEY_SERVICE_H
 
 #include "mon/QuorumService.h"
+#include "mon/MonitorDBStore.h"
 
 class Paxos;
 class Monitor;
@@ -28,9 +29,15 @@ class ConfigKeyService : public QuorumService
 
   int store_get(const string &key, bufferlist &bl);
   void store_put(const string &key, bufferlist &bl, Context *cb = NULL);
+  void store_delete(MonitorDBStore::TransactionRef t, const string &key);
   void store_delete(const string &key, Context *cb = NULL);
+  void store_delete_prefix(
+      MonitorDBStore::TransactionRef t,
+      const string &prefix);
   void store_list(stringstream &ss);
+  void store_dump(stringstream &ss, const string& prefix);
   bool store_exists(const string &key);
+  bool store_has_prefix(const string &prefix);
 
   static const string STORE_PREFIX;
 
@@ -50,15 +57,20 @@ public:
    * @{
    */
   void init() override { }
-  void get_health(Formatter *f,
-                  list<pair<health_status_t,string> >& summary,
-                  list<pair<health_status_t,string> > *detail) override { }
   bool service_dispatch(MonOpRequestRef op) override;
 
   void start_epoch() override { }
   void finish_epoch() override { }
   void cleanup() override { }
   void service_tick() override { }
+
+  int validate_osd_destroy(const int32_t id, const uuid_d& uuid);
+  void do_osd_destroy(int32_t id, uuid_d& uuid);
+  int validate_osd_new(
+      const uuid_d& uuid,
+      const string& dmcrypt_key,
+      stringstream& ss);
+  void do_osd_new(const uuid_d& uuid, const string& dmcrypt_key);
 
   int get_type() override {
     return QuorumService::SERVICE_CONFIG_KEY;
@@ -67,7 +79,7 @@ public:
   string get_name() const override {
     return "config_key";
   }
-  virtual void get_store_prefixes(set<string>& s);
+  void get_store_prefixes(set<string>& s) const;
   /**
    * @} // ConfigKeyService_Inherited_h
    */

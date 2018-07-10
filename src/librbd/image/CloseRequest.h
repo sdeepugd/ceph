@@ -30,34 +30,36 @@ private:
    * <start>
    *    |
    *    v
+   * BLOCK_IMAGE_WATCHER (skip if R/O)
+   *    |
+   *    v
    * SHUT_DOWN_UPDATE_WATCHERS
    *    |
    *    v
-   * UNREGISTER_IMAGE_WATCHER
-   *    |
-   *    v
    * SHUT_DOWN_AIO_WORK_QUEUE . . .
-   *    |                         .
-   *    v                         .
-   * SHUT_DOWN_EXCLUSIVE_LOCK     . (exclusive lock
-   *    |                         .  disabled)
+   *    |                         . (exclusive lock disabled)
    *    v                         v
-   * FLUSH  < . . . . . . . . . . .
+   * SHUT_DOWN_EXCLUSIVE_LOCK   FLUSH
+   *    |                         .
+   *    |     . . . . . . . . . . .
+   *    |     .
+   *    v     v
+   * UNREGISTER_IMAGE_WATCHER (skip if R/O)
    *    |
    *    v
    * FLUSH_READAHEAD
    *    |
    *    v
-   * SHUTDOWN_CACHE
+   * SHUT_DOWN_OBJECT_DISPATCHER
    *    |
    *    v
-   * FLUSH_OP_WORK_QUEUE . . . . .
-   *    |                        .
-   *    v                        .
-   * CLOSE_PARENT                . (no parent)
-   *    |                        .
-   *    v                        .
-   * FLUSH_IMAGE_WATCHER < . . . .
+   * FLUSH_OP_WORK_QUEUE
+   *    |
+   *    v (skip if no parent)
+   * CLOSE_PARENT
+   *    |
+   *    v
+   * FLUSH_IMAGE_WATCHER
    *    |
    *    v
    * <finish>
@@ -74,11 +76,11 @@ private:
 
   decltype(m_image_ctx->exclusive_lock) m_exclusive_lock;
 
+  void send_block_image_watcher();
+  void handle_block_image_watcher(int r);
+
   void send_shut_down_update_watchers();
   void handle_shut_down_update_watchers(int r);
-
-  void send_unregister_image_watcher();
-  void handle_unregister_image_watcher(int r);
 
   void send_shut_down_io_queue();
   void handle_shut_down_io_queue(int r);
@@ -89,11 +91,14 @@ private:
   void send_flush();
   void handle_flush(int r);
 
+  void send_unregister_image_watcher();
+  void handle_unregister_image_watcher(int r);
+
   void send_flush_readahead();
   void handle_flush_readahead(int r);
 
-  void send_shut_down_cache();
-  void handle_shut_down_cache(int r);
+  void send_shut_down_object_dispatcher();
+  void handle_shut_down_object_dispatcher(int r);
 
   void send_flush_op_work_queue();
   void handle_flush_op_work_queue(int r);

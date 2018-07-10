@@ -21,7 +21,7 @@ namespace librbd {
 namespace {
 
 struct MockTestImageCtx : public librbd::MockImageCtx {
-  MockTestImageCtx(librbd::ImageCtx &image_ctx)
+  explicit MockTestImageCtx(librbd::ImageCtx &image_ctx)
     : librbd::MockImageCtx(image_ctx) {
   }
 };
@@ -206,21 +206,17 @@ public:
     ASSERT_EQ(0, open_image(m_remote_io_ctx, m_image_name, &m_remote_image_ctx));
   }
 
+  void snap_create(librbd::ImageCtx *image_ctx, const std::string &snap_name) {
+    ASSERT_EQ(0, image_ctx->operations->snap_create(cls::rbd::UserSnapshotNamespace(),
+					            snap_name.c_str()));
+    ASSERT_EQ(0, image_ctx->operations->snap_protect(cls::rbd::UserSnapshotNamespace(),
+						     snap_name.c_str()));
+    ASSERT_EQ(0, image_ctx->state->refresh());
+  }
+
   int clone_image(librbd::ImageCtx *parent_image_ctx,
                   const std::string &snap_name, const std::string &clone_name) {
-    {
-      librbd::ImageCtx *ictx = new librbd::ImageCtx(parent_image_ctx->name,
-						    "", "", m_remote_io_ctx,
-                                                    false);
-      ictx->state->open(false);
-      EXPECT_EQ(0, ictx->operations->snap_create(cls::rbd::UserSnapshotNamespace(),
-						 snap_name.c_str()));
-      EXPECT_EQ(0, ictx->operations->snap_protect(cls::rbd::UserSnapshotNamespace(),
-						  snap_name.c_str()));
-      ictx->state->close();
-    }
-
-    EXPECT_EQ(0, parent_image_ctx->state->refresh());
+    snap_create(parent_image_ctx, snap_name);
 
     int order = 0;
     return librbd::clone(m_remote_io_ctx, parent_image_ctx->name.c_str(),
@@ -239,8 +235,10 @@ public:
   }
 
   void expect_ioctx_create(librados::IoCtx &io_ctx) {
+    librados::MockTestMemIoCtxImpl &io_ctx_impl = get_mock_io_ctx(io_ctx);
     EXPECT_CALL(*get_mock_io_ctx(io_ctx).get_mock_rados_client(), create_ioctx(_, _))
-      .WillOnce(Return(&get_mock_io_ctx(io_ctx)));
+      .WillOnce(DoAll(GetReference(&io_ctx_impl),
+                      Return(&get_mock_io_ctx(io_ctx))));
   }
 
   void expect_get_parent_global_image_id(librados::IoCtx &io_ctx,
@@ -249,7 +247,7 @@ public:
     mirror_image.global_image_id = global_id;
 
     bufferlist bl;
-    ::encode(mirror_image, bl);
+    encode(mirror_image, bl);
 
     EXPECT_CALL(get_mock_io_ctx(io_ctx),
                 exec(RBD_MIRRORING, _, StrEq("rbd"), StrEq("mirror_image_get"), _, _, _))
@@ -262,7 +260,7 @@ public:
   void expect_mirror_image_get_image_id(librados::IoCtx &io_ctx,
                                         const std::string &image_id, int r) {
     bufferlist bl;
-    ::encode(image_id, bl);
+    encode(image_id, bl);
 
     EXPECT_CALL(get_mock_io_ctx(io_ctx),
                 exec(RBD_MIRRORING, _, StrEq("rbd"), StrEq("mirror_image_get_image_id"), _, _, _))
@@ -285,10 +283,14 @@ public:
 
   void expect_snap_set(librbd::MockTestImageCtx &mock_image_ctx,
                        const std::string &snap_name, int r) {
-    EXPECT_CALL(*mock_image_ctx.state, snap_set(_, StrEq(snap_name), _))
-      .WillOnce(WithArg<2>(Invoke([this, r](Context *on_finish) {
+    EXPECT_CALL(*mock_image_ctx.state, snap_set(_, _))
+      .WillOnce(Invoke([this, &mock_image_ctx, snap_name, r](uint64_t snap_id, Context *on_finish) {
+          RWLock::RLocker snap_locker(mock_image_ctx.snap_lock);
+          auto id = mock_image_ctx.image_ctx->get_snap_id(
+            cls::rbd::UserSnapshotNamespace{}, snap_name);
+          ASSERT_EQ(snap_id, id);
           m_threads->work_queue->queue(on_finish, r);
-        })));
+        }));
   }
 
   void expect_clone_image(MockCloneRequest &mock_clone_request,
@@ -313,13 +315,13 @@ public:
   MockCreateImageRequest *create_request(const std::string &global_image_id,
                                          const std::string &remote_mirror_uuid,
                                          const std::string &local_image_name,
+					 const std::string &local_image_id,
                                          librbd::MockTestImageCtx &mock_remote_image_ctx,
-					 std::string *local_image_id,
                                          Context *on_finish) {
     return new MockCreateImageRequest(m_local_io_ctx, m_threads->work_queue,
                                       global_image_id, remote_mirror_uuid,
-                                      local_image_name, &mock_remote_image_ctx,
-                                      local_image_id, on_finish);
+                                      local_image_name, local_image_id,
+                                      &mock_remote_image_ctx, on_finish);
   }
 
   librbd::ImageCtx *m_remote_image_ctx;
@@ -333,14 +335,11 @@ TEST_F(TestMockImageReplayerCreateImageRequest, Create) {
   expect_create_image(mock_create_request, m_local_io_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
-                                                   mock_remote_image_ctx,
-						   &local_image_id, &ctx);
+                                                   "image name", "101241a7c4c9",
+                                                   mock_remote_image_ctx, &ctx);
   request->send();
   ASSERT_EQ(0, ctx.wait());
-  ASSERT_FALSE(local_image_id.empty());
 }
 
 TEST_F(TestMockImageReplayerCreateImageRequest, CreateError) {
@@ -351,11 +350,9 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CreateError) {
   expect_create_image(mock_create_request, m_local_io_ctx, -EINVAL);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
-                                                   mock_remote_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   "image name", "101241a7c4c9",
+                                                   mock_remote_image_ctx, &ctx);
   request->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -365,6 +362,7 @@ TEST_F(TestMockImageReplayerCreateImageRequest, Clone) {
   librbd::ImageCtx *local_image_ctx;
   ASSERT_EQ(0, create_image(rbd, m_local_io_ctx, m_image_name, m_image_size));
   ASSERT_EQ(0, open_image(m_local_io_ctx, m_image_name, &local_image_ctx));
+  snap_create(local_image_ctx, "snap");
 
   std::string clone_image_name = get_temp_image_name();
   ASSERT_EQ(0, clone_image(m_remote_image_ctx, "snap", clone_image_name));
@@ -396,14 +394,12 @@ TEST_F(TestMockImageReplayerCreateImageRequest, Clone) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(0, ctx.wait());
-  ASSERT_FALSE(local_image_id.empty());
 }
 
 TEST_F(TestMockImageReplayerCreateImageRequest, CloneGetGlobalImageIdError) {
@@ -423,11 +419,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneGetGlobalImageIdError) {
   expect_get_parent_global_image_id(m_remote_io_ctx, "global uuid", -ENOENT);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -450,11 +445,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneGetLocalParentImageIdError)
   expect_mirror_image_get_image_id(m_local_io_ctx, "local parent id", -ENOENT);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -482,11 +476,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneOpenRemoteParentError) {
                     m_remote_image_ctx->id, mock_remote_parent_image_ctx, -ENOENT);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -524,11 +517,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneOpenLocalParentError) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -538,6 +530,7 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneSnapSetError) {
   librbd::ImageCtx *local_image_ctx;
   ASSERT_EQ(0, create_image(rbd, m_local_io_ctx, m_image_name, m_image_size));
   ASSERT_EQ(0, open_image(m_local_io_ctx, m_image_name, &local_image_ctx));
+  snap_create(local_image_ctx, "snap");
 
   std::string clone_image_name = get_temp_image_name();
   ASSERT_EQ(0, clone_image(m_remote_image_ctx, "snap", clone_image_name));
@@ -568,11 +561,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneSnapSetError) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -582,6 +574,7 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneError) {
   librbd::ImageCtx *local_image_ctx;
   ASSERT_EQ(0, create_image(rbd, m_local_io_ctx, m_image_name, m_image_size));
   ASSERT_EQ(0, open_image(m_local_io_ctx, m_image_name, &local_image_ctx));
+  snap_create(local_image_ctx, "snap");
 
   std::string clone_image_name = get_temp_image_name();
   ASSERT_EQ(0, clone_image(m_remote_image_ctx, "snap", clone_image_name));
@@ -613,11 +606,10 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneError) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -627,6 +619,7 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneLocalParentCloseError) {
   librbd::ImageCtx *local_image_ctx;
   ASSERT_EQ(0, create_image(rbd, m_local_io_ctx, m_image_name, m_image_size));
   ASSERT_EQ(0, open_image(m_local_io_ctx, m_image_name, &local_image_ctx));
+  snap_create(local_image_ctx, "snap");
 
   std::string clone_image_name = get_temp_image_name();
   ASSERT_EQ(0, clone_image(m_remote_image_ctx, "snap", clone_image_name));
@@ -658,14 +651,12 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneLocalParentCloseError) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, 0);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(0, ctx.wait());
-  ASSERT_FALSE(local_image_id.empty());
 }
 
 TEST_F(TestMockImageReplayerCreateImageRequest, CloneRemoteParentCloseError) {
@@ -673,6 +664,7 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneRemoteParentCloseError) {
   librbd::ImageCtx *local_image_ctx;
   ASSERT_EQ(0, create_image(rbd, m_local_io_ctx, m_image_name, m_image_size));
   ASSERT_EQ(0, open_image(m_local_io_ctx, m_image_name, &local_image_ctx));
+  snap_create(local_image_ctx, "snap");
 
   std::string clone_image_name = get_temp_image_name();
   ASSERT_EQ(0, clone_image(m_remote_image_ctx, "snap", clone_image_name));
@@ -704,14 +696,12 @@ TEST_F(TestMockImageReplayerCreateImageRequest, CloneRemoteParentCloseError) {
   expect_close_image(mock_close_image_request, mock_remote_parent_image_ctx, -EINVAL);
 
   C_SaferCond ctx;
-  std::string local_image_id;
   MockCreateImageRequest *request = create_request("global uuid", "remote uuid",
-                                                   "image name",
+                                                   "image name", "101241a7c4c9",
                                                    mock_remote_clone_image_ctx,
-                                                   &local_image_id, &ctx);
+                                                   &ctx);
   request->send();
   ASSERT_EQ(0, ctx.wait());
-  ASSERT_FALSE(local_image_id.empty());
 }
 
 } // namespace image_replayer

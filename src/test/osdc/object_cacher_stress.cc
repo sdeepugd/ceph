@@ -14,7 +14,6 @@
 #include "common/Mutex.h"
 #include "common/snap_types.h"
 #include "global/global_init.h"
-#include "include/atomic.h"
 #include "include/buffer.h"
 #include "include/Context.h"
 #include "include/stringify.h"
@@ -23,9 +22,11 @@
 #include "FakeWriteback.h"
 #include "MemWriteback.h"
 
+#include <atomic>
+
 // XXX: Only tests default namespace
 struct op_data {
-  op_data(std::string oid, uint64_t offset, uint64_t len, bool read)
+  op_data(const std::string &oid, uint64_t offset, uint64_t len, bool read)
     : extent(oid, 0, offset, len, 0), is_read(read)
   {
     extent.oloc.pool = 0;
@@ -35,19 +36,19 @@ struct op_data {
   ObjectExtent extent;
   bool is_read;
   ceph::bufferlist result;
-  atomic_t done;
+  std::atomic<unsigned> done = { 0 };
 };
 
 class C_Count : public Context {
   op_data *m_op;
-  atomic_t *m_outstanding;
+  std::atomic<unsigned> *m_outstanding = nullptr;
 public:
-  C_Count(op_data *op, atomic_t *outstanding)
+  C_Count(op_data *op, std::atomic<unsigned> *outstanding)
     : m_op(op), m_outstanding(outstanding) {}
   void finish(int r) override {
-    m_op->done.inc();
-    assert(m_outstanding->read() > 0);
-    m_outstanding->dec();
+    m_op->done++;
+    assert(*m_outstanding > 0);
+    (*m_outstanding)--;
   }
 };
 
@@ -67,8 +68,8 @@ int stress_test(uint64_t num_ops, uint64_t num_objs,
 		   true);
   obc.start();
 
-  atomic_t outstanding_reads;
-  vector<ceph::shared_ptr<op_data> > ops;
+  std::atomic<unsigned> outstanding_reads = { 0 };
+  vector<std::shared_ptr<op_data> > ops;
   ObjectCacher::ObjectSet object_set(NULL, 0, 0);
   SnapContext snapc;
   ceph::buffer::ptr bp(max_op_len);
@@ -88,19 +89,19 @@ int stress_test(uint64_t num_ops, uint64_t num_objs,
 
   for (uint64_t i = 0; i < num_ops; ++i) {
     uint64_t offset = random() % max_obj_size;
-    uint64_t max_len = MIN(max_obj_size - offset, max_op_len);
+    uint64_t max_len = std::min(max_obj_size - offset, max_op_len);
     // no zero-length operations
-    uint64_t length = random() % (MAX(max_len - 1, 1)) + 1;
+    uint64_t length = random() % (std::max<uint64_t>(max_len - 1, 1)) + 1;
     std::string oid = "test" + stringify(random() % num_objs);
     bool is_read = random() < percent_reads * RAND_MAX;
-    ceph::shared_ptr<op_data> op(new op_data(oid, offset, length, is_read));
+    std::shared_ptr<op_data> op(new op_data(oid, offset, length, is_read));
     ops.push_back(op);
     std::cout << "op " << i << " " << (is_read ? "read" : "write")
 	      << " " << op->extent << "\n";
     if (op->is_read) {
       ObjectCacher::OSDRead *rd = obc.prepare_read(CEPH_NOSNAP, &op->result, 0);
       rd->extents.push_back(op->extent);
-      outstanding_reads.inc();
+      outstanding_reads++;
       Context *completion = new C_Count(op.get(), &outstanding_reads);
       lock.Lock();
       int r = obc.readx(rd, &object_set, completion);
@@ -128,7 +129,7 @@ int stress_test(uint64_t num_ops, uint64_t num_objs,
     std::cout << "waiting for read " << i << ops[i]->extent << std::endl;
     uint64_t done = 0;
     while (done == 0) {
-      done = ops[i]->done.read();
+      done = ops[i]->done;
       if (!done) {
 	usleep(500);
       }
@@ -354,9 +355,9 @@ int main(int argc, const char **argv)
 {
   std::vector<const char*> args;
   argv_to_vec(argc, argv, args);
-  env_to_vec(args);
   auto cct = global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT,
-			 CODE_ENVIRONMENT_UTILITY, 0);
+			 CODE_ENVIRONMENT_UTILITY,
+			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
 
   long long delay_ns = 0;
   long long num_ops = 1000;

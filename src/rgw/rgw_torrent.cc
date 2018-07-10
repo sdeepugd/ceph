@@ -9,7 +9,6 @@
 
 #define dout_subsys ceph_subsys_rgw
 
-using namespace std;
 using ceph::crypto::MD5;
 using namespace librados;
 using namespace boost;
@@ -27,7 +26,6 @@ seed::~seed()
 {
   seed::info.sha1_bl.clear();
   bl.clear();
-  torrent_bl.clear();
   s = NULL;
   store = NULL;
 }
@@ -38,8 +36,10 @@ void seed::init(struct req_state *p_req, RGWRados *p_store)
   store = p_store;
 }
 
-void seed::get_torrent_file(int &op_ret, RGWRados::Object::Read &read_op, uint64_t &total_len, 
-  bufferlist &bl_data, rgw_obj &obj)
+int seed::get_torrent_file(RGWRados::Object::Read &read_op,
+                           uint64_t &total_len,
+                           ceph::bufferlist &bl_data,
+                           rgw_obj &obj)
 {
   /* add other field if config is set */
   dencode.bencode_dict(bl);
@@ -58,31 +58,26 @@ void seed::get_torrent_file(int &op_ret, RGWRados::Object::Read &read_op, uint64
   }
 
   string oid, key;
-  map<string, bufferlist> m;
-  set<string> obj_key;
   get_obj_bucket_and_oid_loc(obj, oid, key);
-  ldout(s->cct, 0) << "NOTICE: head obj oid= " << oid << dendl;
+  ldout(s->cct, 20) << "NOTICE: head obj oid= " << oid << dendl;
 
-  obj_key.insert(RGW_OBJ_TORRENT);
-  op_ret = read_op.state.io_ctx.omap_get_vals_by_keys(oid, obj_key, &m);
-  if (op_ret < 0)
-  {
-    ldout(s->cct, 0) << "ERROR: failed to omap_get_vals_by_keys op_ret = " << op_ret << dendl;
-    return;
+  const set<string> obj_key{RGW_OBJ_TORRENT};
+  map<string, bufferlist> m;
+  const int r = read_op.state.io_ctx.omap_get_vals_by_keys(oid, obj_key, &m);
+  if (r < 0) {
+    ldout(s->cct, 0) << "ERROR: omap_get_vals_by_keys failed: " << r << dendl;
+    return r;
   }
-
-  map<string, bufferlist>::iterator iter;
-  for (iter = m.begin(); iter != m.end(); ++iter)
-  {
-    bufferlist bl_tmp = iter->second;
-    char *pbuff = bl_tmp.c_str();
-    bl.append(pbuff, bl_tmp.length());
+  if (m.size() != 1) {
+    ldout(s->cct, 0) << "ERROR: omap key " RGW_OBJ_TORRENT " not found" << dendl;
+    return -EINVAL;
   }
+  bl.append(std::move(m.begin()->second));
   dencode.bencode_end(bl);
 
   bl_data = bl;
   total_len = bl.length();
-  return;
+  return 0;
 }
 
 bool seed::get_flag()
@@ -90,15 +85,35 @@ bool seed::get_flag()
   return is_torrent;
 }
 
-void seed::save_data(bufferlist &bl)
+void seed::update(bufferlist &bl)
 {
   if (!is_torrent)
   {
     return;
   }
-
   info.len += bl.length();
-  torrent_bl.push_back(bl);
+  sha1(&h, bl, bl.length());
+}
+
+int seed::complete()
+{
+  uint64_t remain = info.len%info.piece_length;
+  uint8_t  remain_len = ((remain > 0)? 1 : 0);
+  sha_len = (info.len/info.piece_length + remain_len)*CEPH_CRYPTO_SHA1_DIGESTSIZE;
+
+  int ret = 0;
+   /* produce torrent data */
+  do_encode();
+
+  /* save torrent data into OMAP */
+  ret = save_torrent_file();
+  if (0 != ret)
+  {
+    ldout(s->cct, 0) << "ERROR: failed to save_torrent_file() ret= "<< ret << dendl;
+    return ret;
+  }
+
+  return 0;
 }
 
 off_t seed::get_data_len()
@@ -135,8 +150,8 @@ void seed::sha1(SHA1 *h, bufferlist &bl, off_t bl_len)
   for (off_t i = 0; i < num; i++)
   {
     memset(sha, 0x00, sizeof(sha));
-    h->Update((byte *)pstr, info.piece_length);
-    h->Final((byte *)sha);
+    h->Update((unsigned char *)pstr, info.piece_length);
+    h->Final((unsigned char *)sha);
     set_info_pieces(sha);
     pstr += info.piece_length;
   }
@@ -145,53 +160,10 @@ void seed::sha1(SHA1 *h, bufferlist &bl, off_t bl_len)
   if (0 != remain)
   {
     memset(sha, 0x00, sizeof(sha));
-    h->Update((byte *)pstr, remain);
-    h->Final((byte *)sha);
+    h->Update((unsigned char *)pstr, remain);
+    h->Final((unsigned char *)sha);
     set_info_pieces(sha);
   }
-}
-
-int seed::sha1_process()
-{
-  uint64_t remain = info.len%info.piece_length;
-  uint8_t  remain_len = ((remain > 0)? 1 : 0);
-  sha_len = (info.len/info.piece_length + remain_len)*CEPH_CRYPTO_SHA1_DIGESTSIZE;
-
-  SHA1 h;
-  list<bufferlist>::iterator iter = torrent_bl.begin();
-  for (; iter != torrent_bl.end(); ++iter)
-  {
-    bufferlist &bl_info = *iter;
-    sha1(&h, bl_info, (*iter).length());
-  }
-
-  return 0;
-}
-
-int seed::handle_data()
-{
-  int ret = 0;
-
-  /* sha1 process */
-  ret = sha1_process();
-  if (0 != ret)
-  {
-    ldout(s->cct, 0) << "ERROR: failed to sha1_process() ret= "<< ret << dendl;
-    return ret;
-  }
-
-  /* produce torrent data */
-  do_encode();
-
-  /* save torrent data into OMAP */
-  ret = save_torrent_file();
-  if (0 != ret)
-  {
-    ldout(s->cct, 0) << "ERROR: failed to save_torrent_file() ret= "<< ret << dendl;
-    return ret;
-  }
-
-  return 0;
 }
 
 int seed::get_params()

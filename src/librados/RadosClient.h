@@ -14,6 +14,7 @@
 #ifndef CEPH_LIBRADOS_RADOSCLIENT_H
 #define CEPH_LIBRADOS_RADOSCLIENT_H
 
+#include "common/config_fwd.h"
 #include "common/Cond.h"
 #include "common/Mutex.h"
 #include "common/RWLock.h"
@@ -27,9 +28,9 @@
 #include "IoCtxImpl.h"
 
 struct AuthAuthorizer;
+struct Context;
 class CephContext;
 struct Connection;
-struct md_config_t;
 class Message;
 class MLog;
 class Messenger;
@@ -74,8 +75,13 @@ private:
 
   version_t log_last_version;
   rados_log_callback_t log_cb;
+  rados_log_callback2_t log_cb2;
   void *log_cb_arg;
   string log_watch;
+
+  bool service_daemon = false;
+  string daemon_name, service_name;
+  map<string,string> daemon_metadata;
 
   int wait_for_osdmap();
 
@@ -93,6 +99,9 @@ public:
 
   uint64_t get_instance_id();
 
+  int get_min_compatible_client(int8_t* min_compat_client,
+                                int8_t* require_min_compat_client);
+
   int wait_for_latest_osdmap();
 
   int create_ioctx(const char *name, IoCtxImpl **io);
@@ -105,7 +114,7 @@ public:
   uint64_t pool_required_alignment(int64_t pool_id);
   int pool_required_alignment2(int64_t pool_id, uint64_t *alignment);
   int pool_get_auid(uint64_t pool_id, unsigned long long *auid);
-  int pool_get_name(uint64_t pool_id, std::string *auid);
+  int pool_get_name(uint64_t pool_id, std::string *auid, bool wait_latest_map = false);
 
   int pool_list(std::list<std::pair<int64_t, string> >& ls);
   int get_pool_stats(std::list<string>& ls, map<string,::pool_stat_t>& result);
@@ -130,6 +139,8 @@ public:
 
   int mon_command(const vector<string>& cmd, const bufferlist &inbl,
 	          bufferlist *outbl, string *outs);
+  void mon_command_async(const vector<string>& cmd, const bufferlist &inbl,
+                         bufferlist *outbl, string *outs, Context *on_finish);
   int mon_command(int rank,
 		  const vector<string>& cmd, const bufferlist &inbl,
 	          bufferlist *outbl, string *outs);
@@ -144,11 +155,21 @@ public:
 	         bufferlist *poutbl, string *prs);
 
   void handle_log(MLog *m);
-  int monitor_log(const string& level, rados_log_callback_t cb, void *arg);
+  int monitor_log(const string& level, rados_log_callback_t cb,
+		  rados_log_callback2_t cb2, void *arg);
 
   void get();
   bool put();
   void blacklist_self(bool set);
+
+  int service_daemon_register(
+    const std::string& service,  ///< service name (e.g., 'rgw')
+    const std::string& name,     ///< daemon name (e.g., 'gwfoo')
+    const std::map<std::string,std::string>& metadata); ///< static metadata about daemon
+  int service_daemon_update_status(
+    std::map<std::string,std::string>&& status);
+
+  mon_feature_t get_required_monitor_features() const;
 };
 
 #endif

@@ -14,11 +14,10 @@
 
 
 #include "OSDMonitor.h"
-#include "PGMonitor.h"
 
 #include "FSCommands.h"
 #include "MDSMonitor.h"
-
+#include "MgrStatMonitor.h"
 
 
 static const string EXPERIMENTAL_WARNING("Warning! This feature is experimental."
@@ -40,7 +39,7 @@ class FlagSetHandler : public FileSystemCommandHandler
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     string flag_name;
@@ -80,18 +79,24 @@ class FlagSetHandler : public FileSystemCommandHandler
 class FsNewHandler : public FileSystemCommandHandler
 {
   public:
-  FsNewHandler()
-    : FileSystemCommandHandler("fs new")
+  explicit FsNewHandler(Paxos *paxos)
+    : FileSystemCommandHandler("fs new"), m_paxos(paxos)
   {
+  }
+
+  bool batched_propose() override {
+    return true;
   }
 
   int handle(
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
-      std::stringstream &ss)
+      const cmdmap_t& cmdmap,
+      std::stringstream &ss) override
   {
+    assert(m_paxos->is_plugged());
+
     string metadata_name;
     cmd_getval(g_ceph_context, cmdmap, "metadata", metadata_name);
     int64_t metadata = mon->osdmon()->osdmap.lookup_pg_pool_name(metadata_name);
@@ -100,13 +105,17 @@ class FsNewHandler : public FileSystemCommandHandler
       return -ENOENT;
     }
 
-    string force;
-    cmd_getval(g_ceph_context,cmdmap, "force", force);
-    int64_t metadata_num_objects = mon->pgmon()->pg_map.pg_pool_sum[metadata].stats.sum.num_objects;
-    if (force != "--force" && metadata_num_objects > 0) {
-      ss << "pool '" << metadata_name
-	 << "' already contains some objects. Use an empty pool instead.";
-      return -EINVAL;
+    string force_str;
+    cmd_getval(g_ceph_context,cmdmap, "force", force_str);
+    bool force = (force_str == "--force");
+    const pool_stat_t *stat = mon->mgrstatmon()->get_pool_stat(metadata);
+    if (stat) {
+      int64_t metadata_num_objects = stat->stats.sum.num_objects;
+      if (!force && metadata_num_objects > 0) {
+	ss << "pool '" << metadata_name
+	   << "' already contains some objects. Use an empty pool instead.";
+	return -EINVAL;
+      }
     }
 
     string data_name;
@@ -120,7 +129,7 @@ class FsNewHandler : public FileSystemCommandHandler
       ss << "pool '" << data_name << "' has id 0, which CephFS does not allow. Use another pool or recreate it to get a non-zero pool id.";
       return -EINVAL;
     }
-   
+
     string fs_name;
     cmd_getval(g_ceph_context, cmdmap, "fs_name", fs_name);
     if (fs_name.empty()) {
@@ -152,9 +161,9 @@ class FsNewHandler : public FileSystemCommandHandler
     }
 
     for (auto fs : fsmap.get_filesystems()) {
-      const set<int64_t>& data_pools = fs->mds_map.get_data_pools();
+      const std::vector<int64_t> &data_pools = fs->mds_map.get_data_pools();
       string sure;
-      if ((data_pools.find(data) != data_pools.end()
+      if ((std::find(data_pools.begin(), data_pools.end(), data) != data_pools.end()
 	   || fs->mds_map.get_metadata_pool() == metadata)
 	  && ((!cmd_getval(g_ceph_context, cmdmap, "sure", sure)
 	       || sure != "--allow-dangerous-metadata-overlay"))) {
@@ -169,27 +178,52 @@ class FsNewHandler : public FileSystemCommandHandler
     pg_pool_t const *metadata_pool = mon->osdmon()->osdmap.get_pg_pool(metadata);
     assert(metadata_pool != NULL);  // Checked it existed above
 
-    // we must make these checks before we even allow ourselves to *think*
-    // about requesting a proposal to the osdmonitor and bail out now if
-    // we believe we must.  bailing out *after* we request the proposal is
-    // bad business as we could have changed the osdmon's state and ending up
-    // returning an error to the user.
-    int r = _check_pool(mon->osdmon()->osdmap, data, false, &ss);
+    int r = _check_pool(mon->osdmon()->osdmap, data, false, force, &ss);
     if (r < 0) {
       return r;
     }
 
-    r = _check_pool(mon->osdmon()->osdmap, metadata, true, &ss);
+    r = _check_pool(mon->osdmon()->osdmap, metadata, true, force, &ss);
     if (r < 0) {
       return r;
     }
+    
+    if (!mon->osdmon()->is_writeable()) {
+      // not allowed to write yet, so retry when we can
+      mon->osdmon()->wait_for_writeable(op, new PaxosService::C_RetryMessage(mon->mdsmon(), op));
+      return -EAGAIN;
+    }
+    mon->osdmon()->do_application_enable(data,
+					 pg_pool_t::APPLICATION_NAME_CEPHFS,
+					 "data", fs_name);
+    mon->osdmon()->do_application_enable(metadata,
+					 pg_pool_t::APPLICATION_NAME_CEPHFS,
+					 "metadata", fs_name);
+    mon->osdmon()->propose_pending();
 
     // All checks passed, go ahead and create.
-    fsmap.create_filesystem(fs_name, metadata, data,
-                            mon->get_quorum_con_features());
+    auto fs = fsmap.create_filesystem(fs_name, metadata, data,
+        mon->get_quorum_con_features());
+
     ss << "new fs with metadata pool " << metadata << " and data pool " << data;
+
+    // assign a standby to rank 0 to avoid health warnings
+    std::string _name;
+    mds_gid_t gid = fsmap.find_replacement_for({fs->fscid, 0}, _name,
+        g_conf->mon_force_standby_active);
+
+    if (gid != MDS_GID_NONE) {
+      const auto &info = fsmap.get_info_gid(gid);
+      mon->clog->info() << info.human_name() << " assigned to filesystem "
+          << fs_name << " as rank 0";
+      fsmap.promote(gid, fs, 0);
+    }
+
     return 0;
   }
+
+private:
+  Paxos *m_paxos;
 };
 
 class SetHandler : public FileSystemCommandHandler
@@ -203,7 +237,7 @@ public:
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     std::string fs_name;
@@ -242,20 +276,23 @@ public:
         ss << "You must specify at least one MDS";
         return -EINVAL;
       }
-
-      if (!fs->mds_map.allows_multimds() && n > fs->mds_map.get_max_mds() &&
-	  n > 1) {
-	ss << "multi-MDS clusters are not enabled; set 'allow_multimds' to enable";
-	return -EINVAL;
+      if (n > 1 && n > fs->mds_map.get_max_mds()) {
+	if (fs->mds_map.was_snaps_ever_allowed() &&
+	    !fs->mds_map.allows_multimds_snaps()) {
+	  ss << "multi-active MDS is not allowed while there are snapshots possibly created by pre-mimic MDS";
+	  return -EINVAL;
+	}
       }
       if (n > MAX_MDS) {
         ss << "may not have more than " << MAX_MDS << " MDS ranks";
         return -EINVAL;
       }
+
       fsmap.modify_filesystem(
           fs->fscid,
           [n](std::shared_ptr<Filesystem> fs)
       {
+	fs->mds_map.clear_flag(CEPH_MDSMAP_NOT_JOINABLE);
         fs->mds_map.set_max_mds(n);
       });
     } else if (var == "inline_data") {
@@ -295,10 +332,14 @@ public:
         });
       }
     } else if (var == "balancer") {
-      ss << "setting the metadata load balancer to " << val;
-        fsmap.modify_filesystem(
-            fs->fscid,
-            [val](std::shared_ptr<Filesystem> fs)
+      if (val.empty()) {
+        ss << "unsetting the metadata load balancer";
+      } else {
+        ss << "setting the metadata load balancer to " << val;
+      }
+      fsmap.modify_filesystem(
+	fs->fscid,
+	[val](std::shared_ptr<Filesystem> fs)
         {
           fs->mds_map.set_balancer(val);
         });
@@ -334,12 +375,6 @@ public:
         });
 	ss << "disabled new snapshots";
       } else {
-	string confirm;
-	if (!cmd_getval(g_ceph_context, cmdmap, "confirm", confirm) ||
-	    confirm != "--yes-i-really-mean-it") {
-	  ss << EXPERIMENTAL_WARNING;
-	  return -EPERM;
-	}
         fsmap.modify_filesystem(
             fs->fscid,
             [](std::shared_ptr<Filesystem> fs)
@@ -349,76 +384,106 @@ public:
 	ss << "enabled new snapshots";
       }
     } else if (var == "allow_multimds") {
-      bool enable_multimds = false;
-      int r = parse_bool(val, &enable_multimds, ss);
+        ss << "Multiple MDS is always enabled. Use the max_mds"
+           << " parameter to control the number of active MDSs"
+           << " allowed. This command is DEPRECATED and will be"
+           << " REMOVED from future releases.";
+    } else if (var == "allow_multimds_snaps") {
+      bool enable = false;
+      int r = parse_bool(val, &enable, ss);
       if (r != 0) {
-	return r;
+        return r;
       }
 
-      if (!enable_multimds) {
-	fsmap.modify_filesystem(fs->fscid,
-	     [](std::shared_ptr<Filesystem> fs)
-		{
-		  fs->mds_map.clear_multimds_allowed();
-		});
-	ss << "disallowed increasing the cluster size past 1";
-      } else {
-	string confirm;
-	if (!cmd_getval(g_ceph_context, cmdmap, "confirm", confirm) ||
-	    confirm != "--yes-i-really-mean-it") {
-	  ss << EXPERIMENTAL_WARNING;
-	  return -EPERM;
-	}
+      string confirm;
+      if (!cmd_getval(g_ceph_context, cmdmap, "confirm", confirm) ||
+	  confirm != "--yes-i-am-really-a-mds") {
+	ss << "Warning! This command is for MDS only. Do not run it manually";
+	return -EPERM;
+      }
+
+      if (enable) {
+	ss << "enabled multimds with snapshot";
         fsmap.modify_filesystem(
             fs->fscid,
             [](std::shared_ptr<Filesystem> fs)
         {
-          fs->mds_map.set_multimds_allowed();
+	  fs->mds_map.set_multimds_snaps_allowed();
         });
-	ss << "enabled creation of more than 1 active MDS";
+      } else {
+	ss << "disabled multimds with snapshot";
+        fsmap.modify_filesystem(
+            fs->fscid,
+            [](std::shared_ptr<Filesystem> fs)
+        {
+	  fs->mds_map.clear_multimds_snaps_allowed();
+        });
       }
     } else if (var == "allow_dirfrags") {
-      bool enable_dirfrags = false;
-      int r = parse_bool(val, &enable_dirfrags, ss);
-      if (r != 0) {
-	return r;
-      }
-
-      if (!enable_dirfrags) {
-	fsmap.modify_filesystem(fs->fscid,
-	     [](std::shared_ptr<Filesystem> fs)
-		{
-		  fs->mds_map.clear_dirfrags_allowed();
-		});
-	ss << "disallowed new directory fragmentation";
-      } else {
-        fsmap.modify_filesystem(
-            fs->fscid,
-            [](std::shared_ptr<Filesystem> fs)
-        {
-          fs->mds_map.set_dirfrags_allowed();
-        });
-	ss << "enabled directory fragmentation";
-      }
-    } else if (var == "cluster_down") {
+        ss << "Directory fragmentation is now permanently enabled."
+           << " This command is DEPRECATED and will be REMOVED from future releases.";
+    } else if (var == "down") {
       bool is_down = false;
       int r = parse_bool(val, &is_down, ss);
       if (r != 0) {
         return r;
       }
 
+      ss << fs->mds_map.get_fs_name();
+
       fsmap.modify_filesystem(
           fs->fscid,
           [is_down](std::shared_ptr<Filesystem> fs)
       {
-        if (is_down) {
-          fs->mds_map.set_flag(CEPH_MDSMAP_DOWN);
-        } else {
-          fs->mds_map.clear_flag(CEPH_MDSMAP_DOWN);
-        }
+	if (is_down) {
+          if (fs->mds_map.get_max_mds() > 0) {
+	    fs->mds_map.set_old_max_mds();
+	    fs->mds_map.set_max_mds(0);
+          } /* else already down! */
+	} else {
+	  mds_rank_t oldmax = fs->mds_map.get_old_max_mds();
+	  fs->mds_map.set_max_mds(oldmax ? oldmax : 1);
+	}
       });
 
-      ss << "marked " << (is_down ? "down" : "up");
+      if (is_down) {
+	ss << " marked down. ";
+      } else {
+	ss << " marked up, max_mds = " << fs->mds_map.get_max_mds();
+      }
+    } else if (var == "cluster_down" || var == "joinable") {
+      bool joinable = true;
+      int r = parse_bool(val, &joinable, ss);
+      if (r != 0) {
+        return r;
+      }
+      if (var == "cluster_down") {
+        joinable = !joinable;
+      }
+
+      ss << fs->mds_map.get_fs_name();
+
+      fsmap.modify_filesystem(
+          fs->fscid,
+          [joinable](std::shared_ptr<Filesystem> fs)
+      {
+	if (joinable) {
+	  fs->mds_map.clear_flag(CEPH_MDSMAP_NOT_JOINABLE);
+	} else {
+	  fs->mds_map.set_flag(CEPH_MDSMAP_NOT_JOINABLE);
+	}
+      });
+
+      if (joinable) {
+	ss << " marked joinable; MDS may join as newly active.";
+      } else {
+	ss << " marked not joinable; MDS cannot join as newly active.";
+      }
+
+      if (var == "cluster_down") {
+        ss << " WARNING: cluster_down flag is deprecated and will be"
+           << " removed in a future version. Please use \"joinable\".";
+      }
     } else if (var == "standby_count_wanted") {
       if (interr.length()) {
        ss << var << " requires an integer value";
@@ -434,6 +499,36 @@ public:
       {
         fs->mds_map.set_standby_count_wanted(n);
       });
+    } else if (var == "session_timeout") {
+      if (interr.length()) {
+       ss << var << " requires an integer value";
+       return -EINVAL;
+      }
+      if (n < 30) {
+       ss << var << " must be at least 30s";
+       return -ERANGE;
+      }
+      fsmap.modify_filesystem(
+          fs->fscid,
+          [n](std::shared_ptr<Filesystem> fs)
+      {
+        fs->mds_map.set_session_timeout((uint32_t)n);
+      });
+    } else if (var == "session_autoclose") {
+      if (interr.length()) {
+       ss << var << " requires an integer value";
+       return -EINVAL;
+      }
+      if (n < 30) {
+       ss << var << " must be at least 30s";
+       return -ERANGE;
+      }
+      fsmap.modify_filesystem(
+          fs->fscid,
+          [n](std::shared_ptr<Filesystem> fs)
+      {
+        fs->mds_map.set_session_autoclose((uint32_t)n);
+      });
     } else {
       ss << "unknown variable " << var;
       return -EINVAL;
@@ -446,17 +541,23 @@ public:
 class AddDataPoolHandler : public FileSystemCommandHandler
 {
   public:
-  AddDataPoolHandler()
-    : FileSystemCommandHandler("fs add_data_pool")
+  explicit AddDataPoolHandler(Paxos *paxos)
+    : FileSystemCommandHandler("fs add_data_pool"), m_paxos(paxos)
   {}
+
+  bool batched_propose() override {
+    return true;
+  }
 
   int handle(
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
+    assert(m_paxos->is_plugged());
+
     string poolname;
     cmd_getval(g_ceph_context, cmdmap, "pool", poolname);
 
@@ -483,10 +584,26 @@ class AddDataPoolHandler : public FileSystemCommandHandler
       }
     }
 
-    int r = _check_pool(mon->osdmon()->osdmap, poolid, false, &ss);
+    int r = _check_pool(mon->osdmon()->osdmap, poolid, false, false, &ss);
     if (r != 0) {
       return r;
     }
+
+    // no-op when the data_pool already on fs
+    if (fs->mds_map.is_data_pool(poolid)) {
+      ss << "data pool " << poolid << " is already on fs " << fs_name;
+      return 0;
+    }
+
+    if (!mon->osdmon()->is_writeable()) {
+      // not allowed to write yet, so retry when we can
+      mon->osdmon()->wait_for_writeable(op, new PaxosService::C_RetryMessage(mon->mdsmon(), op));
+      return -EAGAIN;
+    }
+    mon->osdmon()->do_application_enable(poolid,
+					 pg_pool_t::APPLICATION_NAME_CEPHFS,
+					 "data", poolname);
+    mon->osdmon()->propose_pending();
 
     fsmap.modify_filesystem(
         fs->fscid,
@@ -499,6 +616,9 @@ class AddDataPoolHandler : public FileSystemCommandHandler
 
     return 0;
   }
+
+private:
+  Paxos *m_paxos;
 };
 
 class SetDefaultHandler : public FileSystemCommandHandler
@@ -512,7 +632,7 @@ class SetDefaultHandler : public FileSystemCommandHandler
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     std::string fs_name;
@@ -539,7 +659,7 @@ class RemoveFilesystemHandler : public FileSystemCommandHandler
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     // Check caller has correctly named the FS to delete
@@ -583,7 +703,7 @@ class RemoveFilesystemHandler : public FileSystemCommandHandler
     for (const auto &gid : to_fail) {
       // Standby replays don't write, so it isn't important to
       // wait for an osdmap propose here: ignore return value.
-      mon->mdsmon()->fail_mds_gid(gid);
+      mon->mdsmon()->fail_mds_gid(fsmap, gid);
     }
 
     fsmap.erase_filesystem(fs->fscid);
@@ -603,7 +723,7 @@ class ResetFilesystemHandler : public FileSystemCommandHandler
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     string fs_name;
@@ -648,7 +768,7 @@ class RemoveDataPoolHandler : public FileSystemCommandHandler
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     string poolname;
@@ -708,47 +828,6 @@ class RemoveDataPoolHandler : public FileSystemCommandHandler
   }
 };
 
-
-/**
- * For commands that refer to a particular filesystem,
- * enable wrapping to implement the legacy version of
- * the command (like "mds add_data_pool" vs "fs add_data_pool")
- *
- * The wrapped handler must expect a fs_name argument in
- * its command map.
- */
-template<typename T>
-class LegacyHandler : public T
-{
-  std::string legacy_prefix;
-
-  public:
-  LegacyHandler(const std::string &new_prefix)
-    : T()
-  {
-    legacy_prefix = new_prefix;
-  }
-
-  std::string const &get_prefix() override {return legacy_prefix;}
-
-  int handle(
-      Monitor *mon,
-      FSMap &fsmap,
-      MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
-      std::stringstream &ss) override
-  {
-    auto fs = fsmap.get_legacy_filesystem();
-    if (fs == nullptr) {
-      ss << "No filesystem configured";
-      return -ENOENT;
-    }
-    std::map<string, cmd_vartype> modified = cmdmap;
-    modified["fs_name"] = fs->mds_map.get_fs_name();
-    return T::handle(mon, fsmap, op, modified, ss);
-  }
-};
-
 /**
  * For commands with an alternative prefix
  */
@@ -758,7 +837,7 @@ class AliasHandler : public T
   std::string alias_prefix;
 
   public:
-  AliasHandler(const std::string &new_prefix)
+  explicit AliasHandler(const std::string &new_prefix)
     : T()
   {
     alias_prefix = new_prefix;
@@ -770,7 +849,7 @@ class AliasHandler : public T
       Monitor *mon,
       FSMap &fsmap,
       MonOpRequestRef op,
-      map<string, cmd_vartype> &cmdmap,
+      const cmdmap_t& cmdmap,
       std::stringstream &ss) override
   {
     return T::handle(mon, fsmap, op, cmdmap, ss);
@@ -778,22 +857,16 @@ class AliasHandler : public T
 };
 
 
-std::list<std::shared_ptr<FileSystemCommandHandler> > FileSystemCommandHandler::load()
+std::list<std::shared_ptr<FileSystemCommandHandler> >
+FileSystemCommandHandler::load(Paxos *paxos)
 {
   std::list<std::shared_ptr<FileSystemCommandHandler> > handlers;
 
   handlers.push_back(std::make_shared<SetHandler>());
-  handlers.push_back(std::make_shared<LegacyHandler<SetHandler> >("mds set"));
   handlers.push_back(std::make_shared<FlagSetHandler>());
-  handlers.push_back(std::make_shared<AddDataPoolHandler>());
-  handlers.push_back(std::make_shared<LegacyHandler<AddDataPoolHandler> >(
-        "mds add_data_pool"));
+  handlers.push_back(std::make_shared<AddDataPoolHandler>(paxos));
   handlers.push_back(std::make_shared<RemoveDataPoolHandler>());
-  handlers.push_back(std::make_shared<LegacyHandler<RemoveDataPoolHandler> >(
-        "mds remove_data_pool"));
-  handlers.push_back(std::make_shared<LegacyHandler<RemoveDataPoolHandler> >(
-        "mds rm_data_pool"));
-  handlers.push_back(std::make_shared<FsNewHandler>());
+  handlers.push_back(std::make_shared<FsNewHandler>(paxos));
   handlers.push_back(std::make_shared<RemoveFilesystemHandler>());
   handlers.push_back(std::make_shared<ResetFilesystemHandler>());
 
@@ -832,6 +905,7 @@ int FileSystemCommandHandler::_check_pool(
     OSDMap &osd_map,
     const int64_t pool_id,
     bool metadata,
+    bool force,
     std::stringstream *ss) const
 {
   assert(ss != NULL);
@@ -876,6 +950,14 @@ int FileSystemCommandHandler::_check_pool(
   if (pool->is_tier()) {
     *ss << " pool '" << pool_name << "' (id '" << pool_id
       << "') is already in use as a cache tier.";
+    return -EINVAL;
+  }
+
+  if (!force && !pool->application_metadata.empty() &&
+      pool->application_metadata.count(
+        pg_pool_t::APPLICATION_NAME_CEPHFS) == 0) {
+    *ss << " pool '" << pool_name << "' (id '" << pool_id
+        << "') has a non-CephFS application enabled.";
     return -EINVAL;
   }
 

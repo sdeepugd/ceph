@@ -15,36 +15,33 @@
 #ifndef CEPH_CONFIG_H
 #define CEPH_CONFIG_H
 
-#include <iosfwd>
-#include <functional>
-#include <vector>
 #include <map>
-#include <set>
-#include <boost/variant.hpp>
-
+#include <boost/container/small_vector.hpp>
 #include "common/ConfUtils.h"
 #include "common/entity_name.h"
+#include "common/code_environment.h"
 #include "common/Mutex.h"
 #include "log/SubsystemMap.h"
-#include "common/config_obs.h"
-#include "msg/msg_types.h"
-
-enum {
-  CEPH_DEFAULT_CRUSH_REPLICATED_RULESET,
-  CEPH_DEFAULT_CRUSH_ERASURE_RULESET,
-};
-
-#define OSD_REP_PRIMARY 0
-#define OSD_REP_SPLAY   1
-#define OSD_REP_CHAIN   2
+#include "common/options.h"
+#include "common/subsys_types.h"
+#include "common/config_fwd.h"
+#include "common/lock_mutex.h"
 
 class CephContext;
 
-extern const char *CEPH_CONF_FILE_DEFAULT;
+enum {
+  CONF_DEFAULT,
+  CONF_MON,
+  CONF_FILE,
+  CONF_ENV,
+  CONF_CMDLINE,
+  CONF_OVERRIDE,
+  CONF_FINAL
+};
 
-#define LOG_TO_STDERR_NONE 0
-#define LOG_TO_STDERR_SOME 1
-#define LOG_TO_STDERR_ALL 2
+extern const char *ceph_conf_level_name(int level);
+
+namespace ceph::internal {
 
 /** This class represents the current Ceph configuration.
  *
@@ -66,7 +63,7 @@ extern const char *CEPH_CONF_FILE_DEFAULT;
  *
  * To prevent serious problems resulting from thread-safety issues, we disallow
  * changing std::string configuration values after
- * md_config_t::internal_safe_to_start_threads becomes true. You can still
+ * md_config_t::safe_to_start_threads becomes true. You can still
  * change integer or floating point values, and the option declared with
  * SAFE_OPTION macro. Notice the latter options can not be read directly
  * (conf->foo), one should use either observers or get_val() method
@@ -75,93 +72,71 @@ extern const char *CEPH_CONF_FILE_DEFAULT;
  * FIXME: really we shouldn't allow changing integer or floating point values
  * while another thread is reading them, either.
  */
-struct md_config_t {
+template<LockPolicy lock_policy>
+struct md_config_impl {
 public:
+  typedef boost::variant<int64_t md_config_t::*,
+                         uint64_t md_config_t::*,
+                         std::string md_config_t::*,
+                         double md_config_t::*,
+                         bool md_config_t::*,
+                         entity_addr_t md_config_t::*,
+			 entity_addrvec_t md_config_t::*,
+                         uuid_d md_config_t::*> member_ptr_t;
+
+  // For use when intercepting configuration updates
+  typedef std::function<bool(
+      const std::string &k, const std::string &v)> config_callback;
+
+  /// true if we are a daemon (as per CephContext::code_env)
+  const bool is_daemon;
+
   /* Maps configuration options to the observer listening for them. */
-  typedef std::multimap <std::string, md_config_obs_t*> obs_map_t;
+  typedef std::multimap <std::string, md_config_obs_impl<lock_policy>*> obs_map_t;
 
   /* Set of configuration options that have changed since the last
    * apply_changes */
   typedef std::set < std::string > changed_set_t;
 
-  struct invalid_config_value_t { };
-  typedef boost::variant<invalid_config_value_t,
-                         int,
-                         long long,
-                         std::string,
-                         double,
-                         float,
-                         bool,
-                         entity_addr_t,
-                         uint32_t,
-                         uint64_t,
-                         uuid_d> config_value_t;
-  typedef boost::variant<const int md_config_t::*,
-                         const long long md_config_t::*,
-                         const std::string md_config_t::*,
-                         const double md_config_t::*,
-                         const float md_config_t::*,
-                         const bool md_config_t::*,
-                         const entity_addr_t md_config_t::*,
-                         const uint32_t md_config_t::*,
-                         const uint64_t md_config_t::*,
-                         const uuid_d md_config_t::*> member_ptr_t;
+  /*
+   * Mapping from legacy config option names to class members
+   */
+  std::map<std::string, md_config_impl::member_ptr_t> legacy_values;
 
-   typedef enum {
-	OPT_INT, OPT_LONGLONG, OPT_STR, OPT_DOUBLE, OPT_FLOAT, OPT_BOOL,
-	OPT_ADDR, OPT_U32, OPT_U64, OPT_UUID
-   } opt_type_t;
+  /**
+   * The configuration schema, in the form of Option objects describing
+   * possible settings.
+   */
+  std::map<std::string, const Option&> schema;
 
-  typedef std::function<int(std::string*, std::string*)> validator_t;
+  /**
+   * The current values of all settings described by the schema
+   */
+  std::map<std::string, map<int32_t,Option::value_t>> values;
 
-  class config_option {
-  public:
-    const char *name;
-    opt_type_t type;
-    md_config_t::member_ptr_t md_member_ptr;
-    bool safe; // promise to access it only via md_config_t::get_val
-    validator_t validator;
-  private:
-    template<typename T> struct get_typed_pointer_visitor : public boost::static_visitor<T const *> {
-      md_config_t const *conf;
-      explicit get_typed_pointer_visitor(md_config_t const *conf_) : conf(conf_) { }
-      template<typename U,
-	typename boost::enable_if<boost::is_same<T, U>, int>::type = 0>
-	  T const *operator()(const U md_config_t::* member_ptr) {
-	    return &(conf->*member_ptr);
-	  }
-      template<typename U,
-	typename boost::enable_if_c<!boost::is_same<T, U>::value, int>::type = 0>
-	  T const *operator()(const U md_config_t::* member_ptr) {
-	    return nullptr;
-	  }
-    };
-  public:
-    // is it OK to alter the value when threads are running?
-    bool is_safe() const;
-    // Given a configuration, return a pointer to this option inside
-    // that configuration.
-    template<typename T> void conf_ptr(T const *&ptr, md_config_t const *conf) const {
-      get_typed_pointer_visitor<T> gtpv(conf);
-      ptr = boost::apply_visitor(gtpv, md_member_ptr);
-    }
-    template<typename T> void conf_ptr(T *&ptr, md_config_t *conf) const {
-      get_typed_pointer_visitor<T> gtpv(conf);
-      ptr = const_cast<T *>(boost::apply_visitor(gtpv, md_member_ptr));
-    }
-    template<typename T> T const *conf_ptr(md_config_t const *conf) const {
-      get_typed_pointer_visitor<T> gtpv(conf);
-      return boost::apply_visitor(gtpv, md_member_ptr);
-    }
-    template<typename T> T *conf_ptr(md_config_t *conf) const {
-      get_typed_pointer_visitor<T> gtpv(conf);
-      return const_cast<T *>(boost::apply_visitor(gtpv, md_member_ptr));
-    }
-  };
+  /// values from mon that we failed to set
+  std::map<std::string,std::string> ignored_mon_values;
+
+  /// original raw values saved that may need to re-expand at certain time
+  mutable std::map<std::string, std::string> may_reexpand_meta;
+
+  /// encoded, cached copy of of values + ignored_mon_values
+  bufferlist values_bl;
+
+  /// version for values_bl; increments each time there is a change
+  uint64_t values_bl_version = 0;
+
+  /// encoded copy of defaults (map<string,string>)
+  bufferlist defaults_bl;
+
+  typedef enum {
+    OPT_INT, OPT_LONGLONG, OPT_STR, OPT_DOUBLE, OPT_FLOAT, OPT_BOOL,
+    OPT_ADDR, OPT_ADDRVEC, OPT_U32, OPT_U64, OPT_UUID
+  } opt_type_t;
 
   // Create a new md_config_t structure.
-  md_config_t();
-  ~md_config_t();
+  explicit md_config_impl(bool is_daemon=false);
+  ~md_config_impl();
 
   // Adds a new observer to this configuration. You can do this at any time,
   // but it will only receive notifications for the changes that happen after
@@ -171,24 +146,27 @@ public:
   // but before anyone can call injectargs.
   //
   // The caller is responsible for allocating observers.
-  void add_observer(md_config_obs_t* observer_);
+  void add_observer(md_config_obs_impl<lock_policy>* observer_);
 
   // Remove an observer from this configuration.
   // This doesn't delete the observer! If you allocated it with new(),
   // you need to delete it yourself.
   // This function will assert if you try to delete an observer that isn't
   // there.
-  void remove_observer(md_config_obs_t* observer_);
+  void remove_observer(md_config_obs_impl<lock_policy>* observer_);
 
   // Parse a config file
   int parse_config_files(const char *conf_files,
 			 std::ostream *warnings, int flags);
 
   // Absorb config settings from the environment
-  void parse_env();
+  void parse_env(const char *env_var = "CEPH_ARGS");
 
   // Absorb config settings from argv
-  int parse_argv(std::vector<const char*>& args);
+  int parse_argv(std::vector<const char*>& args, int level=CONF_CMDLINE);
+
+  // do any commands we got from argv (--show-config, --show-config-val)
+  void do_argv_commands();
 
   // Expand all metavariables. Make any pending observer callbacks.
   void apply_changes(std::ostream *oss);
@@ -196,26 +174,60 @@ public:
   bool _internal_field(const string& k);
   void call_all_observers();
 
+  void set_safe_to_start_threads();
+  void _clear_safe_to_start_threads();  // this is only used by the unit test
+
+  /// Look up an option in the schema
+  const Option *find_option(const string& name) const;
+
+  /// Set a default value
+  void set_val_default(const std::string& key, const std::string &val);
+
+  /// Set a values from mon
+  int set_mon_vals(CephContext *cct,
+      const map<std::string,std::string>& kv,
+      config_callback config_cb);
+
   // Called by the Ceph daemons to make configuration changes at runtime
   int injectargs(const std::string &s, std::ostream *oss);
 
   // Set a configuration value, or crash
   // Metavariables will be expanded.
-  void set_val_or_die(const char *key, const char *val);
+  void set_val_or_die(const std::string &key, const std::string &val);
 
   // Set a configuration value.
   // Metavariables will be expanded.
-  int set_val(const char *key, const char *val, bool meta=true);
-  int set_val(const char *key, const string& s, bool meta=true) {
-    return set_val(key, s.c_str(), meta);
+  int set_val(const std::string &key, const char *val,
+              std::stringstream *err_ss=nullptr);
+  int set_val(const std::string &key, const string& s,
+              std::stringstream *err_ss=nullptr) {
+    return set_val(key, s.c_str(), err_ss);
   }
+
+  /// clear override value
+  int rm_val(const std::string& key);
+
+  /// get encoded map<string,map<int32_t,string>> of entire config
+  void get_config_bl(uint64_t have_version,
+		     bufferlist *bl,
+		     uint64_t *got_version);
+
+  /// get encoded map<string,string> of compiled-in defaults
+  void get_defaults_bl(bufferlist *bl);
 
   // Get a configuration value.
   // No metavariables will be returned (they will have already been expanded)
-  int get_val(const char *key, char **buf, int len) const;
-  int _get_val(const char *key, char **buf, int len) const;
-  config_value_t get_val_generic(const char *key) const;
-  template<typename T> T get_val(const char *key) const;
+  int get_val(const std::string &key, char **buf, int len) const;
+  int get_val(const std::string &key, std::string *val) const;
+  Option::value_t get_val_generic(const std::string &key) const;
+  template<typename T> const T get_val(const std::string &key) const;
+  template<typename T, typename Callback, typename...Args>
+  auto with_val(const string& key, Callback&& cb, Args&&... args) const ->
+    std::result_of_t<Callback(const T&, Args...)> {
+    return std::forward<Callback>(cb)(
+      boost::get<T>(this->get_val_generic(key)),
+      std::forward<Args>(args)...);
+  }
 
   void get_all_keys(std::vector<std::string> *keys) const;
 
@@ -228,59 +240,86 @@ public:
   // Get a value from the configuration file that we read earlier.
   // Metavariables will be expanded if emeta is true.
   int get_val_from_conf_file(const std::vector <std::string> &sections,
-		   const char *key, std::string &out, bool emeta) const;
+		   std::string const &key, std::string &out, bool emeta) const;
 
   /// dump all config values to a stream
   void show_config(std::ostream& out);
   /// dump all config values to a formatter
   void show_config(Formatter *f);
+  
+  /// dump all config settings to a formatter
+  void config_options(Formatter *f);
 
-  /// obtain a diff between our config values and another md_config_t values
-  void diff(const md_config_t *other,
-            map<string,pair<string,string> > *diff, set<string> *unknown);
+  /// dump config diff from default, conf, mon, etc.
+  void diff(Formatter *f, std::string name=string{}) const;
 
   /// print/log warnings/errors from parsing the config
   void complain_about_parse_errors(CephContext *cct);
 
 private:
+  // we use this to avoid variable expansion loops
+  typedef boost::container::small_vector<pair<const Option*,
+					      const Option::value_t*>,
+					 4> expand_stack_t;
+
+  void validate_schema();
   void validate_default_settings();
 
-  int _get_val(const char *key, std::string *value) const;
-  config_value_t _get_val(const char *key) const;
+  int _get_val_cstr(const std::string &key, char **buf, int len) const;
+  Option::value_t _get_val(const std::string &key,
+			   expand_stack_t *stack=0,
+			   std::ostream *err=0) const;
+  Option::value_t _get_val(const Option& o,
+			   expand_stack_t *stack=0,
+			   std::ostream *err=0) const;
+  const Option::value_t& _get_val_default(const Option& o) const;
+  Option::value_t _get_val_nometa(const Option& o) const;
+
+  int _rm_val(const std::string& key, int level);
+
+  void _refresh(const Option& opt);
+
   void _show_config(std::ostream *out, Formatter *f);
 
   void _get_my_sections(std::vector <std::string> &sections) const;
 
   int _get_val_from_conf_file(const std::vector <std::string> &sections,
-			      const char *key, std::string &out, bool emeta) const;
+			      const std::string &key, std::string &out) const;
 
   int parse_option(std::vector<const char*>& args,
 		   std::vector<const char*>::iterator& i,
-		   std::ostream *oss);
+		   std::ostream *oss,
+		   int level);
   int parse_injectargs(std::vector<const char*>& args,
 		      std::ostream *oss);
-  int parse_config_files_impl(const std::list<std::string> &conf_files,
-			      std::ostream *warnings);
 
-  int set_val_impl(const std::string &val, config_option const *opt,
-                   std::string *error_message);
-  int set_val_raw(const char *val, config_option const *opt);
+  int _set_val(
+    const std::string &val,
+    const Option &opt,
+    int level,  // CONF_*
+    std::string *error_message);
 
-  void init_subsys();
+  template <typename T>
+  void assign_member(member_ptr_t ptr, const Option::value_t &val);
 
-  bool expand_meta(std::string &val,
-		   std::ostream *oss) const;
+
+  void update_legacy_vals();
+  void update_legacy_val(const Option &opt,
+      md_config_impl::member_ptr_t member);
+
+  Option::value_t _expand_meta(
+    const Option::value_t& in,
+    const Option *o,
+    expand_stack_t *stack,
+    std::ostream *err) const;
+
 public:  // for global_init
-  bool early_expand_meta(std::string &val,
-			 std::ostream *oss) const {
-    Mutex::Locker l(lock);
-    return expand_meta(val, oss);
-  }
+  void early_expand_meta(std::string &val,
+			 std::ostream *oss) const;
+
+  // for those want to reexpand special meta, e.g, $pid
+  void finalize_reexpand_meta();
 private:
-  bool expand_meta(std::string &val,
-		   config_option const *opt,
-		   std::list<config_option const *> stack,
-		   std::ostream *oss) const;
 
   /// expand all metavariables in config structure.
   void expand_all_meta();
@@ -291,8 +330,17 @@ public:
   std::deque<std::string> parse_errors;
 private:
 
+  // This will be set to true when it is safe to start threads.
+  // Once it is true, it will never change.
+  bool safe_to_start_threads = false;
+
+  bool do_show_config = false;
+  string do_show_config_value;
+
   obs_map_t observers;
   changed_set_t changed;
+
+  vector<Option> subsys_options;
 
 public:
   ceph::logging::SubsystemMap subsys;
@@ -303,29 +351,31 @@ public:
   /// cluster name
   string cluster;
 
-#define OPTION_OPT_INT(name) const int name;
-#define OPTION_OPT_LONGLONG(name) const long long name;
-#define OPTION_OPT_STR(name) const std::string name;
-#define OPTION_OPT_DOUBLE(name) const double name;
-#define OPTION_OPT_FLOAT(name) const float name;
-#define OPTION_OPT_BOOL(name) const bool name;
-#define OPTION_OPT_ADDR(name) const entity_addr_t name;
-#define OPTION_OPT_U32(name) const uint32_t name;
-#define OPTION_OPT_U64(name) const uint64_t name;
-#define OPTION_OPT_UUID(name) const uuid_d name;
-#define OPTION(name, ty, init) \
+  bool no_mon_config = false;
+
+// This macro block defines C members of the md_config_t struct
+// corresponding to the definitions in legacy_config_opts.h.
+// These C members are consumed by code that was written before
+// the new options.cc infrastructure: all newer code should
+// be consume options via explicit get() rather than C members.
+#define OPTION_OPT_INT(name) int64_t name;
+#define OPTION_OPT_LONGLONG(name) int64_t name;
+#define OPTION_OPT_STR(name) std::string name;
+#define OPTION_OPT_DOUBLE(name) double name;
+#define OPTION_OPT_FLOAT(name) double name;
+#define OPTION_OPT_BOOL(name) bool name;
+#define OPTION_OPT_ADDR(name) entity_addr_t name;
+#define OPTION_OPT_ADDRVEC(name) entity_addrvec_t name;
+#define OPTION_OPT_U32(name) uint64_t name;
+#define OPTION_OPT_U64(name) uint64_t name;
+#define OPTION_OPT_UUID(name) uuid_d name;
+#define OPTION(name, ty) \
   public:                      \
-    OPTION_##ty(name)          \
-    struct option_##name##_t;
-#define OPTION_VALIDATOR(name)
-#define SAFE_OPTION(name, ty, init) \
+    OPTION_##ty(name)          
+#define SAFE_OPTION(name, ty) \
   protected:                        \
-    OPTION_##ty(name)               \
-  public:                           \
-    struct option_##name##_t;
-#define SUBSYS(name, log, gather)
-#define DEFAULT_SUBSYS(log, gather)
-#include "common/config_opts.h"
+    OPTION_##ty(name)               
+#include "common/legacy_config_opts.h"
 #undef OPTION_OPT_INT
 #undef OPTION_OPT_LONGLONG
 #undef OPTION_OPT_STR
@@ -333,80 +383,42 @@ public:
 #undef OPTION_OPT_FLOAT
 #undef OPTION_OPT_BOOL
 #undef OPTION_OPT_ADDR
+#undef OPTION_OPT_ADDRVEC
 #undef OPTION_OPT_U32
 #undef OPTION_OPT_U64
 #undef OPTION_OPT_UUID
 #undef OPTION
-#undef OPTION_VALIDATOR
 #undef SAFE_OPTION
-#undef SUBSYS
-#undef DEFAULT_SUBSYS
 
+public:
   unsigned get_osd_pool_default_min_size() const {
-    return osd_pool_default_min_size ?
-      MIN(osd_pool_default_min_size, osd_pool_default_size) :
-      osd_pool_default_size - osd_pool_default_size / 2;
+    auto min_size = get_val<uint64_t>("osd_pool_default_min_size");
+    auto size = get_val<uint64_t>("osd_pool_default_size");
+    return min_size ? std::min(min_size, size) : (size - size / 2);
   }
 
   /** A lock that protects the md_config_t internals. It is
    * recursive, for simplicity.
    * It is best if this lock comes first in the lock hierarchy. We will
    * hold this lock when calling configuration observers.  */
-  mutable Mutex lock;
+  LockMutex<lock_policy> lock;
 
   friend class test_md_config_t;
-protected:
-  // Tests and possibly users expect options to appear in the output
-  // of ceph-conf in the same order as declared in config_opts.h
-  std::shared_ptr<const std::vector<config_option>> config_options;
-  config_option const *find_config_option(const std::string& normalized_key) const;
 };
 
+template<LockPolicy lp>
 template<typename T>
-struct get_typed_value_visitor : public boost::static_visitor<T> {
-  template<typename U,
-    typename boost::enable_if<boost::is_same<T, U>, int>::type = 0>
-      T operator()(U & val) {
-	return std::move(val);
-      }
-  template<typename U,
-    typename boost::enable_if_c<!boost::is_same<T, U>::value, int>::type = 0>
-      T operator()(U &val) {
-	assert("wrong type or option does not exist" == nullptr);
-      }
-};
-
-template<typename T> T md_config_t::get_val(const char *key) const {
-  config_value_t generic_val = this->get_val_generic(key);
-  get_typed_value_visitor<T> gtv;
-  return boost::apply_visitor(gtv, generic_val);
+const T md_config_impl<lp>::get_val(const std::string &key) const {
+  return boost::get<T>(this->get_val_generic(key));
 }
 
-inline std::ostream& operator<<(std::ostream& o, const md_config_t::invalid_config_value_t& ) {
+} // namespace ceph::internal
+
+inline std::ostream& operator<<(std::ostream& o, const boost::blank& ) {
       return o << "INVALID_CONFIG_VALUE";
 }
 
 int ceph_resolve_file_search(const std::string& filename_list,
 			     std::string& result);
-
-typedef md_config_t::config_option config_option;
-
-
-enum config_subsys_id {
-  ceph_subsys_,   // default
-#define OPTION(a,b,c)
-#define OPTION_VALIDATOR(name)
-#define SAFE_OPTION(a,b,c)
-#define SUBSYS(name, log, gather) \
-  ceph_subsys_##name,
-#define DEFAULT_SUBSYS(log, gather)
-#include "common/config_opts.h"
-#undef SUBSYS
-#undef OPTION
-#undef OPTION_VALIDATOR
-#undef SAFE_OPTION
-#undef DEFAULT_SUBSYS
-  ceph_subsys_max
-};
 
 #endif

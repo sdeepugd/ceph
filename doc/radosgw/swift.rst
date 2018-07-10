@@ -49,7 +49,7 @@ The following table describes the support status for current Swift functional fe
 +---------------------------------+-----------------+----------------------------------------+
 | **List Objects**                | Supported       |                                        |
 +---------------------------------+-----------------+----------------------------------------+
-| **Static Website**              | Not Supported   |                                        |
+| **Static Website**              | Supported       |                                        |
 +---------------------------------+-----------------+----------------------------------------+
 | **Create Object**               | Supported       |                                        |
 +---------------------------------+-----------------+----------------------------------------+
@@ -72,4 +72,4 @@ The following table describes the support status for current Swift functional fe
 | **CORS**                        | Not Supported   |                                        |
 +---------------------------------+-----------------+----------------------------------------+
 
-.. _Swift API: http://developer.openstack.org/api-ref-objectstorage-v1.html
+.. _Swift API: https://developer.openstack.org/api-ref/object-store/index.html

@@ -21,8 +21,6 @@
 
 #include "objclass/objclass.h"
 #include <errno.h>
-#include <iostream>
-#include <map>
 #include <string>
 #include <sstream>
 #include <cstdio>
@@ -37,10 +35,10 @@ static int add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   string key, diff_str;
 
-  bufferlist::iterator iter = in->begin();
+  auto iter = in->cbegin();
   try {
-    ::decode(key, iter);
-    ::decode(diff_str, iter);
+    decode(key, iter);
+    decode(diff_str, iter);
   } catch (const buffer::error &err) {
     CLS_LOG(20, "add: invalid decode of input");
     return -EINVAL;
@@ -92,10 +90,10 @@ static int mul(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   string key, diff_str;
 
-  bufferlist::iterator iter = in->begin();
+  auto iter = in->cbegin();
   try {
-    ::decode(key, iter);
-    ::decode(diff_str, iter);
+    decode(key, iter);
+    decode(diff_str, iter);
   } catch (const buffer::error &err) {
     CLS_LOG(20, "add: invalid decode of input");
     return -EINVAL;

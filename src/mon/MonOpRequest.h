@@ -18,7 +18,6 @@
 #include <stdint.h>
 
 #include "common/TrackedOp.h"
-#include "include/memory.h"
 #include "mon/Session.h"
 #include "msg/Message.h"
 
@@ -80,7 +79,7 @@ struct MonOpRequest : public TrackedOp {
 private:
   Message *request;
   utime_t dequeued_time;
-  MonSession *session;
+  RefCountedPtr session;
   ConnectionRef con;
   bool forwarded_to_leader;
   op_type_t op_type;
@@ -88,22 +87,16 @@ private:
   MonOpRequest(Message *req, OpTracker *tracker) :
     TrackedOp(tracker,
       req->get_recv_stamp().is_zero() ?
-      req->get_recv_stamp() : ceph_clock_now()),
+      ceph_clock_now() : req->get_recv_stamp()),
     request(req),
-    session(NULL),
     con(NULL),
     forwarded_to_leader(false),
     op_type(OP_TYPE_NONE)
   {
-    mark_event("header_read", request->get_recv_stamp());
-    mark_event("throttled", request->get_throttle_stamp());
-    mark_event("all_read", request->get_recv_complete_stamp());
-    mark_event("dispatched", request->get_dispatch_stamp());
-
     if (req) {
       con = req->get_connection();
       if (con) {
-        session = static_cast<MonSession*>(con->get_priv());
+        session = con->get_priv();
       }
     }
   }
@@ -133,15 +126,10 @@ protected:
 public:
   ~MonOpRequest() override {
     request->put();
-    // certain ops may not have a session (e.g., AUTH or PING)
-    if (session)
-      session->put();
   }
 
   MonSession *get_session() const {
-    if (!session)
-      return NULL;
-    return session;
+    return static_cast<MonSession*>(session.get());
   }
 
   template<class T>
@@ -158,16 +146,7 @@ public:
   ConnectionRef get_connection() { return con; }
 
   void set_session(MonSession *s) {
-    if (session) {
-      // we will be rewriting the existing session; drop the ref.
-      session->put();
-    }
-
-    if (s == NULL) {
-      session = NULL;
-    } else {
-      session = static_cast<MonSession*>(s->get());
-    }
+    session.reset(s);
   }
 
   bool is_src_mon() const {
@@ -217,5 +196,31 @@ public:
 };
 
 typedef MonOpRequest::Ref MonOpRequestRef;
+
+struct C_MonOp : public Context
+{
+  MonOpRequestRef op;
+
+  explicit C_MonOp(MonOpRequestRef o) :
+    op(o) { }
+
+  void finish(int r) override {
+    if (op && r == -ECANCELED) {
+      op->mark_event("callback canceled");
+    } else if (op && r == -EAGAIN) {
+      op->mark_event("callback retry");
+    } else if (op && r == 0) {
+      op->mark_event("callback finished");
+    }
+    _finish(r);
+  }
+
+  void mark_op_event(const string &event) {
+    if (op)
+      op->mark_event_string(event);
+  }
+
+  virtual void _finish(int r) = 0;
+};
 
 #endif /* MON_OPREQUEST_H_ */

@@ -4,7 +4,6 @@
 #include "tools/rbd/ArgumentTypes.h"
 #include "tools/rbd/Shell.h"
 #include "tools/rbd/Utils.h"
-#include "include/atomic.h"
 #include "include/Context.h"
 #include "include/stringify.h"
 #include "include/rbd/librbd.hpp"
@@ -17,9 +16,11 @@
 #include "global/global_context.h"
 #include <functional>
 #include <iostream>
+#include <regex>
 #include <boost/program_options.hpp>
-#include <boost/regex.hpp>
 #include "include/assert.h"
+
+#include <atomic>
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rbd
@@ -35,11 +36,28 @@ namespace po = boost::program_options;
 
 namespace {
 
+int validate_mirroring_enabled(librados::IoCtx& io_ctx) {
+  librbd::RBD rbd;
+  rbd_mirror_mode_t mirror_mode;
+  int r = rbd.mirror_mode_get(io_ctx, &mirror_mode);
+  if (r < 0) {
+    std::cerr << "rbd: failed to retrieve mirror mode: "
+              << cpp_strerror(r) << std::endl;
+    return r;
+  }
+
+  if (mirror_mode == RBD_MIRROR_MODE_DISABLED) {
+    std::cerr << "rbd: mirroring not enabled on the pool" << std::endl;
+    return -EINVAL;
+  }
+  return 0;
+}
+
 int validate_uuid(const std::string &uuid) {
-  boost::regex pattern("^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$",
-                       boost::regex::icase);
-  boost::smatch match;
-  if (!boost::regex_match(uuid, match, pattern)) {
+  std::regex pattern("^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$",
+                       std::regex::icase);
+  std::smatch match;
+  if (!std::regex_match(uuid, match, pattern)) {
     std::cerr << "rbd: invalid uuid '" << uuid << "'" << std::endl;
     return -EINVAL;
   }
@@ -73,9 +91,9 @@ int get_remote_cluster_spec(const po::variables_map &vm,
   }
 
   if (!spec.empty()) {
-    boost::regex pattern("^(?:(client\\.[^@]+)@)?([^/@]+)$");
-    boost::smatch match;
-    if (!boost::regex_match(spec, match, pattern)) {
+    std::regex pattern("^(?:(client\\.[^@]+)@)?([^/@]+)$");
+    std::smatch match;
+    if (!std::regex_match(spec, match, pattern)) {
       std::cerr << "rbd: invalid spec '" << spec << "'" << std::endl;
       return -EINVAL;
     }
@@ -213,7 +231,7 @@ private:
   const std::string m_image_name;
 
   librbd::Image m_image;
-  Context *m_finalize_ctx;
+  Context *m_finalize_ctx = nullptr;
 
   librbd::mirror_image_info_t m_mirror_image_info;
 
@@ -319,7 +337,7 @@ private:
 class PromoteImageRequest : public ImageRequestBase {
 public:
   PromoteImageRequest(librados::IoCtx &io_ctx, OrderedThrottle &throttle,
-                      const std::string &image_name, atomic_t *counter,
+                      const std::string &image_name, std::atomic<unsigned> *counter,
                       bool force)
     : ImageRequestBase(io_ctx, throttle, image_name), m_counter(counter),
       m_force(force) {
@@ -327,16 +345,17 @@ public:
 
 protected:
   bool skip_action(const librbd::mirror_image_info_t &info) const override {
-    return info.primary;
+    return (info.state != RBD_MIRROR_IMAGE_ENABLED || info.primary);
   }
 
   void execute_action(librbd::Image &image,
                       librbd::RBD::AioCompletion *aio_comp) override {
     image.aio_mirror_image_promote(m_force, aio_comp);
   }
+
   void handle_execute_action(int r) override {
     if (r >= 0) {
-      m_counter->inc();
+      (*m_counter)++;
     }
     ImageRequestBase::handle_execute_action(r);
   }
@@ -346,20 +365,20 @@ protected:
   }
 
 private:
-  atomic_t *m_counter;
+  std::atomic<unsigned> *m_counter = nullptr;
   bool m_force;
 };
 
 class DemoteImageRequest : public ImageRequestBase {
 public:
   DemoteImageRequest(librados::IoCtx &io_ctx, OrderedThrottle &throttle,
-                     const std::string &image_name, atomic_t *counter)
+                     const std::string &image_name, std::atomic<unsigned> *counter)
     : ImageRequestBase(io_ctx, throttle, image_name), m_counter(counter) {
   }
 
 protected:
   bool skip_action(const librbd::mirror_image_info_t &info) const override {
-    return !info.primary;
+    return (info.state != RBD_MIRROR_IMAGE_ENABLED || !info.primary);
   }
 
   void execute_action(librbd::Image &image,
@@ -368,7 +387,7 @@ protected:
   }
   void handle_execute_action(int r) override {
     if (r >= 0) {
-      m_counter->inc();
+      (*m_counter)++;
     }
     ImageRequestBase::handle_execute_action(r);
   }
@@ -378,7 +397,7 @@ protected:
   }
 
 private:
-  atomic_t *m_counter;
+  std::atomic<unsigned> *m_counter = nullptr;
 };
 
 class StatusImageRequest : public ImageRequestBase {
@@ -402,6 +421,10 @@ protected:
   }
 
   void finalize_action() override {
+    if (m_mirror_image_status.info.global_id.empty()) {
+      return;
+    }
+
     std::string state = utils::mirror_image_status_state(m_mirror_image_status);
     std::string last_update = (
       m_mirror_image_status.last_update == 0 ?
@@ -458,7 +481,8 @@ public:
       m_factory(std::bind(ImageRequestAllocator<RequestT>(),
                           std::ref(m_io_ctx), std::ref(m_throttle),
                           std::placeholders::_1, std::forward<Args>(args)...)),
-      m_throttle(g_conf->rbd_concurrent_management_ops, true) {
+      m_throttle(g_conf->get_val<int64_t>("rbd_concurrent_management_ops"),
+                 true) {
   }
 
   int execute() {
@@ -466,7 +490,7 @@ public:
     // mirror image operations
     librbd::RBD rbd;
     int r = rbd.list(m_io_ctx, m_image_names);
-    if (r < 0) {
+    if (r < 0 && r != -ENOENT) {
       std::cerr << "rbd: failed to list images within pool" << std::endl;
       return r;
     }
@@ -497,13 +521,14 @@ void get_peer_add_arguments(po::options_description *positional,
   at::add_pool_options(positional, options);
   positional->add_options()
     ("remote-cluster-spec", "remote cluster spec\n"
-     "(example: [<client name>@]<cluster name>");
+     "(example: [<client name>@]<cluster name>)");
   options->add_options()
     ("remote-client-name", po::value<std::string>(), "remote client name")
     ("remote-cluster", po::value<std::string>(), "remote cluster name");
 }
 
-int execute_peer_add(const po::variables_map &vm) {
+int execute_peer_add(const po::variables_map &vm,
+                     const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -521,9 +546,15 @@ int execute_peer_add(const po::variables_map &vm) {
     config_path = vm[at::CONFIG_PATH].as<std::string>();
   }
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  r = utils::init(pool_name, &rados, &io_ctx);
+  r = utils::init(pool_name, "", &rados, &io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  r = validate_mirroring_enabled(io_ctx);
   if (r < 0) {
     return r;
   }
@@ -559,7 +590,8 @@ void get_peer_remove_arguments(po::options_description *positional,
   add_uuid_option(positional);
 }
 
-int execute_peer_remove(const po::variables_map &vm) {
+int execute_peer_remove(const po::variables_map &vm,
+                        const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -569,9 +601,15 @@ int execute_peer_remove(const po::variables_map &vm) {
     return r;
   }
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  r = utils::init(pool_name, &rados, &io_ctx);
+  r = utils::init(pool_name, "", &rados, &io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  r = validate_mirroring_enabled(io_ctx);
   if (r < 0) {
     return r;
   }
@@ -594,7 +632,8 @@ void get_peer_set_arguments(po::options_description *positional,
     ("value", "new client or cluster name");
 }
 
-int execute_peer_set(const po::variables_map &vm) {
+int execute_peer_set(const po::variables_map &vm,
+                     const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -615,9 +654,15 @@ int execute_peer_set(const po::variables_map &vm) {
     std::cerr << "rbd: must specify new " << key << " value." << std::endl;
   }
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  r = utils::init(pool_name, &rados, &io_ctx);
+  r = utils::init(pool_name, "", &rados, &io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  r = validate_mirroring_enabled(io_ctx);
   if (r < 0) {
     return r;
   }
@@ -653,7 +698,8 @@ int execute_enable_disable(const std::string &pool_name,
   librados::IoCtx io_ctx;
   rbd_mirror_mode_t current_mirror_mode;
 
-  int r = utils::init(pool_name, &rados, &io_ctx);
+  // TODO support namespaces
+  int r = utils::init(pool_name, "", &rados, &io_ctx);
   if (r < 0) {
     return r;
   }
@@ -691,7 +737,8 @@ int execute_enable_disable(const std::string &pool_name,
   return 0;
 }
 
-int execute_disable(const po::variables_map &vm) {
+int execute_disable(const po::variables_map &vm,
+                    const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -699,7 +746,8 @@ int execute_disable(const po::variables_map &vm) {
                                 "disabled");
 }
 
-int execute_enable(const po::variables_map &vm) {
+int execute_enable(const po::variables_map &vm,
+                   const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -723,7 +771,8 @@ void get_info_arguments(po::options_description *positional,
   at::add_format_options(options);
 }
 
-int execute_info(const po::variables_map &vm) {
+int execute_info(const po::variables_map &vm,
+                 const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -738,9 +787,10 @@ int execute_info(const po::variables_map &vm) {
     config_path = vm[at::CONFIG_PATH].as<std::string>();
   }
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  r = utils::init(pool_name, &rados, &io_ctx);
+  r = utils::init(pool_name, "", &rados, &io_ctx);
   if (r < 0) {
     return r;
   }
@@ -798,7 +848,8 @@ void get_status_arguments(po::options_description *positional,
   at::add_verbose_option(options);
 }
 
-int execute_status(const po::variables_map &vm) {
+int execute_status(const po::variables_map &vm,
+                   const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
@@ -815,9 +866,15 @@ int execute_status(const po::variables_map &vm) {
     config_path = vm[at::CONFIG_PATH].as<std::string>();
   }
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  r = utils::init(pool_name, &rados, &io_ctx);
+  r = utils::init(pool_name, "", &rados, &io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  r = validate_mirroring_enabled(io_ctx);
   if (r < 0) {
     return r;
   }
@@ -904,23 +961,32 @@ void get_promote_arguments(po::options_description *positional,
   at::add_pool_options(positional, options);
 }
 
-int execute_promote(const po::variables_map &vm) {
+int execute_promote(const po::variables_map &vm,
+                    const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  int r = utils::init(pool_name, &rados, &io_ctx);
+  int r = utils::init(pool_name, "", &rados, &io_ctx);
   if (r < 0) {
     return r;
   }
 
-  atomic_t counter;
+  r = validate_mirroring_enabled(io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  utils::disable_cache();
+
+  std::atomic<unsigned> counter = { 0 };
   ImageRequestGenerator<PromoteImageRequest> generator(io_ctx, &counter,
                                                        vm["force"].as<bool>());
   r = generator.execute();
 
-  std::cout << "Promoted " << counter.read() << " mirrored images" << std::endl;
+  std::cout << "Promoted " << counter.load() << " mirrored images" << std::endl;
   return r;
 }
 
@@ -929,22 +995,31 @@ void get_demote_arguments(po::options_description *positional,
   at::add_pool_options(positional, options);
 }
 
-int execute_demote(const po::variables_map &vm) {
+int execute_demote(const po::variables_map &vm,
+                   const std::vector<std::string> &ceph_global_init_args) {
   size_t arg_index = 0;
   std::string pool_name = utils::get_pool_name(vm, &arg_index);
 
+  // TODO support namespaces
   librados::Rados rados;
   librados::IoCtx io_ctx;
-  int r = utils::init(pool_name, &rados, &io_ctx);
+  int r = utils::init(pool_name, "", &rados, &io_ctx);
   if (r < 0) {
     return r;
   }
 
-  atomic_t counter;
+  r = validate_mirroring_enabled(io_ctx);
+  if (r < 0) {
+    return r;
+  }
+
+  utils::disable_cache();
+
+  std::atomic<unsigned> counter { 0 };
   ImageRequestGenerator<DemoteImageRequest> generator(io_ctx, &counter);
   r = generator.execute();
 
-  std::cout << "Demoted " << counter.read() << " mirrored images" << std::endl;
+  std::cout << "Demoted " << counter.load() << " mirrored images" << std::endl;
   return r;
 }
 

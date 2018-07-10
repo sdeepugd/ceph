@@ -3,15 +3,10 @@
 #ifndef CEPH_COMMON_PREFORKER_H
 #define CEPH_COMMON_PREFORKER_H
 
-#include "acconfig.h"
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <errno.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sstream>
-#include <string>
 
 #include "include/assert.h"
 #include "common/safe_io.h"
@@ -112,11 +107,8 @@ public:
 
   int signal_exit(int r) {
     if (forked) {
-      // tell parent.  this shouldn't fail, but if it does, pass the
-      // error back to the parent.
-      int ret = safe_write(fd[1], &r, sizeof(r));
-      if (ret <= 0)
-	return ret;
+      /* If we get an error here, it's too late to do anything reasonable about it. */
+      [[maybe_unused]] auto n = safe_write(fd[1], &r, sizeof(r));
     }
     return r;
   }

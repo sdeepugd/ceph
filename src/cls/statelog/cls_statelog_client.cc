@@ -1,7 +1,6 @@
 #include <errno.h>
 
-#include "include/types.h"
-#include "cls/statelog/cls_statelog_ops.h"
+#include "cls/statelog/cls_statelog_client.h"
 #include "include/rados/librados.hpp"
 
 
@@ -13,7 +12,7 @@ void cls_statelog_add(librados::ObjectWriteOperation& op, list<cls_statelog_entr
   bufferlist in;
   cls_statelog_add_op call;
   call.entries = entries;
-  ::encode(call, in);
+  encode(call, in);
   op.exec("statelog", "add", in);
 }
 
@@ -22,7 +21,7 @@ void cls_statelog_add(librados::ObjectWriteOperation& op, cls_statelog_entry& en
   bufferlist in;
   cls_statelog_add_op call;
   call.entries.push_back(entry);
-  ::encode(call, in);
+  encode(call, in);
   op.exec("statelog", "add", in);
 }
 
@@ -53,7 +52,7 @@ void cls_statelog_remove_by_client(librados::ObjectWriteOperation& op, const str
   cls_statelog_remove_op call;
   call.client_id = client_id;
   call.op_id = op_id;
-  ::encode(call, in);
+  encode(call, in);
   op.exec("statelog", "remove", in);
 }
 
@@ -63,7 +62,7 @@ void cls_statelog_remove_by_object(librados::ObjectWriteOperation& op, const str
   cls_statelog_remove_op call;
   call.object = object;
   call.op_id = op_id;
-  ::encode(call, in);
+  encode(call, in);
   op.exec("statelog", "remove", in);
 }
 
@@ -78,8 +77,8 @@ public:
     if (r >= 0) {
       cls_statelog_list_ret ret;
       try {
-        bufferlist::iterator iter = outbl.begin();
-        ::decode(ret, iter);
+        auto iter = outbl.cbegin();
+        decode(ret, iter);
         if (entries)
 	  *entries = ret.entries;
         if (truncated)
@@ -106,7 +105,7 @@ void cls_statelog_list(librados::ObjectReadOperation& op,
   call.marker = in_marker;
   call.max_entries = max_entries;
 
-  ::encode(call, inbl);
+  encode(call, inbl);
 
   op.exec("statelog", "list", inbl, new StateLogListCtx(&entries, out_marker, truncated));
 }
@@ -114,15 +113,13 @@ void cls_statelog_list(librados::ObjectReadOperation& op,
 void cls_statelog_check_state(librados::ObjectOperation& op, const string& client_id, const string& op_id, const string& object, uint32_t state)
 {
   bufferlist inbl;
-  bufferlist outbl;
   cls_statelog_check_state_op call;
   call.client_id = client_id;
   call.op_id = op_id;
   call.object = object;
   call.state = state;
 
-  ::encode(call, inbl);
+  encode(call, inbl);
 
   op.exec("statelog", "check_state", inbl, NULL);
 }
-

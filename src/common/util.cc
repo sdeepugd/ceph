@@ -12,7 +12,6 @@
  * 
  */
 
-#include <errno.h>
 #include <sys/utsname.h>
 #include <boost/lexical_cast.hpp>
 
@@ -20,84 +19,24 @@
 #include "include/util.h"
 #include "common/debug.h"
 #include "common/errno.h"
-#include "common/strtol.h"
 #include "common/version.h"
 
 #ifdef HAVE_SYS_VFS_H
 #include <sys/vfs.h>
 #endif
 
-#if defined(DARWIN) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/param.h>
 #include <sys/mount.h>
+#if defined(__APPLE__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
 #endif
 
-int64_t unit_to_bytesize(string val, ostream *pss)
-{
-  if (val.empty()) {
-    if (pss)
-      *pss << "value is empty!";
-    return -EINVAL;
-  }
+#include <string>
 
-  char c = val[val.length()-1];
-  int modifier = 0;
-  if (!::isdigit(c)) {
-    if (val.length() < 2) {
-      if (pss)
-        *pss << "invalid value: " << val;
-      return -EINVAL;
-    }
-    val = val.substr(0,val.length()-1);
-    switch (c) {
-    case 'B':
-      break;
-    case 'k':
-    case 'K':
-      modifier = 10;
-      break;
-    case 'M':
-      modifier = 20;
-      break;
-    case 'G':
-      modifier = 30;
-      break;
-    case 'T':
-      modifier = 40;
-      break;
-    case 'P':
-      modifier = 50;
-      break;
-    case 'E':
-      modifier = 60;
-      break;
-    default:
-      if (pss)
-        *pss << "unrecognized modifier '" << c << "'" << std::endl;
-      return -EINVAL;
-    }
-  }
-
-  if (val[0] == '+' || val[0] == '-') {
-    if (pss)
-      *pss << "expected numerical value, got: " << val;
-    return -EINVAL;
-  }
-
-  string err;
-  int64_t r = strict_strtoll(val.c_str(), 10, &err);
-  if ((r == 0) && !err.empty()) {
-    if (pss)
-      *pss << err;
-    return -1;
-  }
-  if (r < 0) {
-    if (pss)
-      *pss << "unable to parse positive integer '" << val << "'";
-    return -1;
-  }
-  return (r * (1LL << modifier));
-}
+#include <stdio.h>
 
 int get_fs_stats(ceph_data_stats_t &stats, const char *path)
 {
@@ -180,7 +119,7 @@ static void distro_detect(map<string, string> *m, CephContext *cct)
     lderr(cct) << "distro_detect - /etc/os-release is required" << dendl;
   }
 
-  for (const char* rk: {"distro", "distro_version"}) {
+  for (const char* rk: {"distro", "distro_description"}) {
     if (m->find(rk) == m->end())
       lderr(cct) << "distro_detect - can't detect " << rk << dendl;
   }
@@ -190,6 +129,8 @@ void collect_sys_info(map<string, string> *m, CephContext *cct)
 {
   // version
   (*m)["ceph_version"] = pretty_version_to_str();
+  (*m)["ceph_version_short"] = ceph_version_to_str();
+  (*m)["ceph_release"] = ceph_release_to_str();
 
   // kernel info
   struct utsname u;
@@ -201,7 +142,35 @@ void collect_sys_info(map<string, string> *m, CephContext *cct)
     (*m)["hostname"] = u.nodename;
     (*m)["arch"] = u.machine;
   }
-
+#ifdef __APPLE__
+  // memory
+  {
+    uint64_t size;
+    size_t len = sizeof(size);
+    r = sysctlbyname("hw.memsize", &size, &len, NULL, 0);
+    if (r == 0) {
+      (*m)["mem_total_kb"] = std::to_string(size);
+    }
+  }
+  {
+    xsw_usage vmusage;
+    size_t len = sizeof(vmusage);
+    r = sysctlbyname("vm.swapusage", &vmusage, &len, NULL, 0);
+    if (r == 0) {
+      (*m)["mem_swap_kb"] = std::to_string(vmusage.xsu_total);
+    }
+  }
+  // processor
+  {
+    char buf[100];
+    size_t len = sizeof(buf);
+    r = sysctlbyname("machdep.cpu.brand_string", buf, &len, NULL, 0);
+    if (r == 0) {
+      buf[len - 1] = '\0';
+      (*m)["cpu"] = buf;
+    }
+  }
+#else
   // memory
   FILE *f = fopen(PROCPREFIX "/proc/meminfo", "r");
   if (f) {
@@ -246,7 +215,7 @@ void collect_sys_info(map<string, string> *m, CephContext *cct)
     }
     fclose(f);
   }
-
+#endif
   // distro info
   distro_detect(m, cct);
 }
@@ -269,6 +238,21 @@ void dump_services(Formatter* f, const map<string, list<int> >& services, const 
   f->close_section();
 }
 
+void dump_services(Formatter* f, const map<string, list<string> >& services, const char* type)
+{
+  assert(f);
+
+  f->open_object_section(type);
+  for (const auto& host : services) {
+    f->open_array_section(host.first.c_str());
+    const auto& hosted = host.second;
+    for (const auto& s : hosted) {
+      f->dump_string(type, s);
+    }
+    f->close_section();
+  }
+  f->close_section();
+}
 
 // If non-printable characters found then convert bufferlist to
 // base64 encoded string indicating whether it did.
@@ -303,4 +287,16 @@ string cleanbin(string &str)
   if (base64)
     result = "Base64:" + result;
   return result;
+}
+
+std::string bytes2str(uint64_t count) {
+  static char s[][2] = {"\0", "k", "M", "G", "T", "P", "E", "\0"};
+  int i = 0;
+  while (count >= 1024 && *s[i+1]) {
+    count >>= 10;
+    i++;
+  }
+  char str[128];
+  snprintf(str, sizeof str, "%" PRIu64 "%sB", count, s[i]);
+  return std::string(str);
 }

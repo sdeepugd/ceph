@@ -62,7 +62,9 @@ void LogMonitor::create_initial()
 {
   dout(10) << "create_initial -- creating initial map" << dendl;
   LogEntry e;
-  memset(&e.who, 0, sizeof(e.who));
+  e.name = g_conf->name;
+  e.rank = entity_name_t::MON(mon->rank);
+  e.addrs = mon->messenger->get_myaddrs();
   e.stamp = ceph_clock_now();
   e.prio = CLOG_INFO;
   std::stringstream ss;
@@ -91,8 +93,8 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
     get_version_full(latest_full, latest_bl);
     assert(latest_bl.length() != 0);
     dout(7) << __func__ << " loading summary e" << latest_full << dendl;
-    bufferlist::iterator p = latest_bl.begin();
-    ::decode(summary, p);
+    auto p = latest_bl.cbegin();
+    decode(summary, p);
     dout(7) << __func__ << " loaded summary e" << summary.version << dendl;
   }
 
@@ -103,9 +105,9 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
     assert(err == 0);
     assert(bl.length());
 
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     __u8 v;
-    ::decode(v, p);
+    decode(v, p);
     while (!p.end()) {
       LogEntry le;
       le.decode(p);
@@ -114,6 +116,10 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
       string channel = le.channel;
       if (channel.empty()) // keep retrocompatibility
         channel = CLOG_CHANNEL_CLUSTER;
+
+      if (g_conf->get_val<bool>("mon_cluster_log_to_stderr")) {
+	cerr << channel << " " << le << std::endl;
+      }
 
       if (channels.do_log_to_syslog(channel)) {
         string level = channels.get_level(channel);
@@ -164,6 +170,7 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
     }
 
     summary.version++;
+    summary.prune(g_conf->mon_log_max_summary);
   }
 
   dout(15) << __func__ << " logging for "
@@ -211,7 +218,7 @@ void LogMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   bufferlist bl;
   dout(10) << __func__ << " v" << version << dendl;
   __u8 v = 1;
-  ::encode(v, bl);
+  encode(v, bl);
   multimap<utime_t,LogEntry>::iterator p;
   for (p = pending_log.begin(); p != pending_log.end(); ++p)
     p->second.encode(bl, mon->get_quorum_con_features());
@@ -226,13 +233,13 @@ void LogMonitor::encode_full(MonitorDBStore::TransactionRef t)
   assert(get_last_committed() == summary.version);
 
   bufferlist summary_bl;
-  ::encode(summary, summary_bl, mon->get_quorum_con_features());
+  encode(summary, summary_bl, mon->get_quorum_con_features());
 
   put_version_full(t, summary.version, summary_bl);
   put_version_latest_full(t, summary.version);
 }
 
-version_t LogMonitor::get_trim_to()
+version_t LogMonitor::get_trim_to() const
 {
   if (!mon->is_leader())
     return 0;
@@ -308,6 +315,7 @@ bool LogMonitor::preprocess_log(MonOpRequestRef op)
   return false;
 
  done:
+  mon->no_reply(op);
   return true;
 }
 
@@ -344,6 +352,7 @@ bool LogMonitor::prepare_log(MonOpRequestRef op)
       pending_log.insert(pair<utime_t,LogEntry>(p->stamp, *p));
     }
   }
+  pending_summary.prune(g_conf->mon_log_max_summary);
   wait_for_finished_proposal(op, new C_Log(this, op));
   return true;
 }
@@ -370,17 +379,125 @@ bool LogMonitor::should_propose(double& delay)
 bool LogMonitor::preprocess_command(MonOpRequestRef op)
 {
   op->mark_logmon_event("preprocess_command");
-  int r = -1;
+  MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
+  int r = -EINVAL;
   bufferlist rdata;
   stringstream ss;
 
-  if (r != -1) {
-    string rs;
-    getline(ss, rs);
-    mon->reply_command(op, r, rs, rdata, get_last_committed());
+  cmdmap_t cmdmap;
+  if (!cmdmap_from_json(m->cmd, &cmdmap, ss)) {
+    string rs = ss.str();
+    mon->reply_command(op, -EINVAL, rs, get_last_committed());
     return true;
-  } else
+  }
+  MonSession *session = m->get_session();
+  if (!session) {
+    mon->reply_command(op, -EACCES, "access denied", get_last_committed());
+    return true;
+  }
+
+  string prefix;
+  cmd_getval(g_ceph_context, cmdmap, "prefix", prefix);
+
+  string format;
+  cmd_getval(g_ceph_context, cmdmap, "format", format, string("plain"));
+  boost::scoped_ptr<Formatter> f(Formatter::create(format));
+
+  if (prefix == "log last") {
+    int64_t num = 20;
+    cmd_getval(g_ceph_context, cmdmap, "num", num);
+    if (f) {
+      f->open_array_section("tail");
+    }
+
+    std::string level_str;
+    clog_type level;
+    if (cmd_getval(g_ceph_context, cmdmap, "level", level_str)) {
+      level = LogEntry::str_to_level(level_str);
+      if (level == CLOG_UNKNOWN) {
+        ss << "Invalid severity '" << level_str << "'";
+        mon->reply_command(op, -EINVAL, ss.str(), get_last_committed());
+        return true;
+      }
+    } else {
+      level = CLOG_INFO;
+    }
+
+    std::string channel;
+    if (!cmd_getval(g_ceph_context, cmdmap, "channel", channel)) {
+      channel = CLOG_CHANNEL_DEFAULT;
+    }
+
+    // We'll apply this twice, once while counting out lines
+    // and once while outputting them.
+    auto match = [level](const LogEntry &entry) {
+      return entry.prio >= level;
+    };
+
+    ostringstream ss;
+    if (channel == "*") {
+      list<LogEntry> full_tail;
+      summary.build_ordered_tail(&full_tail);
+      derr << "full " << full_tail << dendl;
+      auto rp = full_tail.rbegin();
+      for (; num > 0 && rp != full_tail.rend(); ++rp) {
+	if (match(*rp)) {
+	  num--;
+	}
+      }
+      if (rp == full_tail.rend()) {
+	--rp;
+      }
+      for (; rp != full_tail.rbegin(); --rp) {
+	if (!match(*rp)) {
+	  continue;
+	}
+	if (f) {
+	  f->dump_object("entry", *rp);
+	} else {
+	  ss << *rp << "\n";
+	}
+      }
+    } else {
+      derr << "bar" << dendl;
+      auto p = summary.tail_by_channel.find(channel);
+      if (p != summary.tail_by_channel.end()) {
+	auto rp = p->second.rbegin();
+	for (; num > 0 && rp != p->second.rend(); ++rp) {
+	  if (match(rp->second)) {
+	    num--;
+	  }
+	}
+	if (rp == p->second.rend()) {
+	  --rp;
+	}
+	for (; rp != p->second.rbegin(); --rp) {
+	  if (!match(rp->second)) {
+	    continue;
+	  }
+	  if (f) {
+	    f->dump_object("entry", rp->second);
+	  } else {
+	    ss << rp->second << "\n";
+	  }
+	}
+      }
+    }
+    if (f) {
+      f->close_section();
+      f->flush(rdata);
+    } else {
+      rdata.append(ss.str());
+    }
+    r = 0;
+  } else {
     return false;
+  }
+
+  string rs;
+  getline(ss, rs);
+  mon->reply_command(op, r, rs, rdata, get_last_committed());
+  return true;
 }
 
 
@@ -392,7 +509,7 @@ bool LogMonitor::prepare_command(MonOpRequestRef op)
   string rs;
   int err = -EINVAL;
 
-  map<string, cmd_vartype> cmdmap;
+  cmdmap_t cmdmap;
   if (!cmdmap_from_json(m->cmd, &cmdmap, ss)) {
     // ss has reason for failure
     string rs = ss.str();
@@ -413,12 +530,16 @@ bool LogMonitor::prepare_command(MonOpRequestRef op)
     vector<string> logtext;
     cmd_getval(g_ceph_context, cmdmap, "logtext", logtext);
     LogEntry le;
-    le.who = m->get_orig_source_inst();
+    le.rank = m->get_orig_source();
+    le.addrs.v.push_back(m->get_orig_source_addr());
+    le.name = session->entity_name;
     le.stamp = m->get_recv_stamp();
     le.seq = 0;
     le.prio = CLOG_INFO;
+    le.channel = CLOG_CHANNEL_DEFAULT;
     le.msg = str_join(logtext, " ");
     pending_summary.add(le);
+    pending_summary.prune(g_conf->mon_log_max_summary);
     pending_log.insert(pair<utime_t,LogEntry>(le.stamp, le));
     wait_for_finished_proposal(op, new Monitor::C_Command(
           mon, op, 0, string(), get_last_committed() + 1));
@@ -433,17 +554,11 @@ bool LogMonitor::prepare_command(MonOpRequestRef op)
 
 int LogMonitor::sub_name_to_id(const string& n)
 {
-  if (n == "log-debug")
-    return CLOG_DEBUG;
-  if (n == "log-info")
-    return CLOG_INFO;
-  if (n == "log-sec")
-    return CLOG_SEC;
-  if (n == "log-warn")
-    return CLOG_WARN;
-  if (n == "log-error")
-    return CLOG_ERROR;
-  return CLOG_UNKNOWN;
+  if (n.substr(0, 4) == "log-" && n.size() > 4) {
+    return LogEntry::str_to_level(n.substr(4));
+  } else {
+    return CLOG_UNKNOWN;
+  }
 }
 
 void LogMonitor::check_subs()
@@ -468,7 +583,7 @@ void LogMonitor::check_sub(Subscription *s)
 
   version_t summary_version = summary.version;
   if (s->next > summary_version) {
-    dout(10) << __func__ << " client " << s->session->inst 
+    dout(10) << __func__ << " client " << s->session->name
 	    << " requested version (" << s->next << ") is greater than ours (" 
 	    << summary_version << "), which means we already sent him" 
 	    << " everything we have." << dendl;
@@ -479,18 +594,13 @@ void LogMonitor::check_sub(Subscription *s)
 
   if (s->next == 0) { 
     /* First timer, heh? */
-    bool ret = _create_sub_summary(mlog, sub_level);
-    if (!ret) {
-      dout(1) << __func__ << " ret = " << ret << dendl;
-      mlog->put();
-      return;
-    }
+    _create_sub_incremental(mlog, sub_level, get_last_committed());
   } else {
     /* let us send you an incremental log... */
     _create_sub_incremental(mlog, sub_level, s->next);
   }
 
-  dout(1) << __func__ << " sending message to " << s->session->inst 
+  dout(1) << __func__ << " sending message to " << s->session->name
 	  << " with " << mlog->entries.size() << " entries"
 	  << " (version " << mlog->version << ")" << dendl;
   
@@ -503,37 +613,6 @@ void LogMonitor::check_sub(Subscription *s)
     mon->session_map.remove_sub(s);
   else
     s->next = summary_version+1;
-}
-
-/**
- * Create a log message containing only the last message in the summary.
- *
- * @param mlog	Log message we'll send to the client.
- * @param level Maximum log level the client is interested in.
- * @return	'true' if we consider we successfully populated @mlog;
- *		'false' otherwise.
- */
-bool LogMonitor::_create_sub_summary(MLog *mlog, int level)
-{
-  dout(10) << __func__ << dendl;
-
-  assert(mlog != NULL);
-
-  if (!summary.tail.size())
-    return false;
-
-  list<LogEntry>::reverse_iterator it = summary.tail.rbegin();
-  for (; it != summary.tail.rend(); ++it) {
-    LogEntry e = *it;
-    if (e.prio < level)
-      continue;
-
-    mlog->entries.push_back(e);
-    mlog->version = summary.version;
-    break;
-  }
-
-  return true;
 }
 
 /**
@@ -563,14 +642,14 @@ void LogMonitor::_create_sub_incremental(MLog *mlog, int level, version_t sv)
   }
 
   version_t summary_ver = summary.version;
-  while (sv <= summary_ver) {
+  while (sv && sv <= summary_ver) {
     bufferlist bl;
     int err = get_version(sv, bl);
     assert(err == 0);
     assert(bl.length());
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     __u8 v;
-    ::decode(v,p);
+    decode(v,p);
     while (!p.end()) {
       LogEntry le;
       le.decode(p);
@@ -732,7 +811,7 @@ ceph::logging::Graylog::Ref LogMonitor::log_channel_info::get_graylog(
   if (graylogs.count(channel) == 0) {
     auto graylog(std::make_shared<ceph::logging::Graylog>("mon"));
 
-    graylog->set_fsid(g_conf->fsid);
+    graylog->set_fsid(g_conf->get_val<uuid_d>("fsid"));
     graylog->set_hostname(g_conf->host);
     graylog->set_destination(get_str_map_key(log_to_graylog_host, channel,
 					     &CLOG_CONFIG_DEFAULT_KEY),
@@ -749,7 +828,7 @@ ceph::logging::Graylog::Ref LogMonitor::log_channel_info::get_graylog(
   return graylogs[channel];
 }
 
-void LogMonitor::handle_conf_change(const struct md_config_t *conf,
+void LogMonitor::handle_conf_change(const md_config_t *conf,
                                     const std::set<std::string> &changed)
 {
   if (changed.count("mon_cluster_log_to_syslog") ||

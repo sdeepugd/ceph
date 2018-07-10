@@ -47,7 +47,7 @@ void SessionMap::register_perfcounters()
   PerfCountersBuilder plb(g_ceph_context, "mds_sessions",
       l_mdssm_first, l_mdssm_last);
   plb.add_u64(l_mdssm_session_count, "session_count",
-      "Session count");
+      "Session count", "sess", PerfCountersBuilder::PRIO_INTERESTING);
   plb.add_u64_counter(l_mdssm_session_add, "session_add",
       "Sessions added");
   plb.add_u64_counter(l_mdssm_session_remove, "session_remove",
@@ -109,9 +109,9 @@ public:
 void SessionMapStore::decode_header(
       bufferlist &header_bl)
 {
-  bufferlist::iterator q = header_bl.begin();
+  auto q = header_bl.cbegin();
   DECODE_START(1, q)
-  ::decode(version, q);
+  decode(version, q);
   DECODE_FINISH(q);
 }
 
@@ -119,7 +119,7 @@ void SessionMapStore::encode_header(
     bufferlist *header_bl)
 {
   ENCODE_START(1, 1, *header_bl);
-  ::encode(version, *header_bl);
+  encode(version, *header_bl);
   ENCODE_FINISH(*header_bl);
 }
 
@@ -143,7 +143,7 @@ void SessionMapStore::decode_values(std::map<std::string, bufferlist> &session_v
     Session *s = get_or_add_session(inst);
     if (s->is_closed())
       s->set_state(Session::STATE_OPEN);
-    bufferlist::iterator q = i->second.begin();
+    auto q = i->second.cbegin();
     s->decode(q);
   }
 }
@@ -303,7 +303,7 @@ void SessionMap::load_legacy()
 
 void SessionMap::_load_legacy_finish(int r, bufferlist &bl)
 { 
-  bufferlist::iterator blp = bl.begin();
+  auto blp = bl.cbegin();
   if (r < 0) {
     derr << "_load_finish got " << cpp_strerror(r) << dendl;
     assert(0 == "failed to load sessionmap");
@@ -450,7 +450,7 @@ void SessionMap::_save_finish(version_t v)
 /**
  * Deserialize sessions, and update by_state index
  */
-void SessionMap::decode_legacy(bufferlist::iterator &p)
+void SessionMap::decode_legacy(bufferlist::const_iterator &p)
 {
   // Populate `sessions`
   SessionMapStore::decode_legacy(p);
@@ -478,20 +478,20 @@ uint64_t SessionMap::set_state(Session *session, int s) {
   return session->get_state_seq();
 }
 
-void SessionMapStore::decode_legacy(bufferlist::iterator& p)
+void SessionMapStore::decode_legacy(bufferlist::const_iterator& p)
 {
   utime_t now = ceph_clock_now();
   uint64_t pre;
-  ::decode(pre, p);
+  decode(pre, p);
   if (pre == (uint64_t)-1) {
     DECODE_START_LEGACY_COMPAT_LEN(3, 3, 3, p);
     assert(struct_v >= 2);
     
-    ::decode(version, p);
+    decode(version, p);
     
     while (!p.end()) {
       entity_inst_t inst;
-      ::decode(inst.name, p);
+      decode(inst.name, p);
       Session *s = get_or_add_session(inst);
       if (s->is_closed())
         s->set_state(Session::STATE_OPEN);
@@ -505,10 +505,10 @@ void SessionMapStore::decode_legacy(bufferlist::iterator& p)
 
     // this is a meaningless upper bound.  can be ignored.
     __u32 n;
-    ::decode(n, p);
+    decode(n, p);
     
     while (n-- && !p.end()) {
-      bufferlist::iterator p2 = p;
+      auto p2 = p;
       Session *s = new Session;
       s->info.decode(p);
       if (session_map.count(s->info.inst.name)) {
@@ -628,6 +628,9 @@ void SessionMap::touch_session(Session *session)
 
 void SessionMap::_mark_dirty(Session *s)
 {
+  if (dirty_sessions.count(s->info.inst.name))
+    return;
+
   if (dirty_sessions.size() >= g_conf->mds_sessionmap_keys_per_op) {
     // Pre-empt the usual save() call from journal segment trim, in
     // order to avoid building up an oversized OMAP update operation
@@ -635,6 +638,7 @@ void SessionMap::_mark_dirty(Session *s)
     save(new C_MDSInternalNoop, version);
   }
 
+  null_sessions.erase(s->info.inst.name);
   dirty_sessions.insert(s->info.inst.name);
 }
 
@@ -735,11 +739,6 @@ void SessionMap::save_if_dirty(const std::set<entity_name_t> &tgt_sessions,
   const uint32_t kpo = g_conf->mds_sessionmap_keys_per_op;
   map<string, bufferlist> to_set;
   for (uint32_t i = 0; i < write_sessions.size(); ++i) {
-    // Start a new write transaction?
-    if (i % g_conf->mds_sessionmap_keys_per_op == 0) {
-      to_set.clear();
-    }
-
     const entity_name_t &session_id = write_sessions[i];
     Session *session = session_map[session_id];
     session->clear_dirty_completed_requests();
@@ -760,6 +759,7 @@ void SessionMap::save_if_dirty(const std::set<entity_name_t> &tgt_sessions,
         || i % kpo == kpo - 1) {
       ObjectOperation op;
       op.omap_set(to_set);
+      to_set.clear(); // clear to start a new transaction      
 
       SnapContext snapc;
       object_t oid = get_object_name();
@@ -822,7 +822,7 @@ void Session::notify_cap_release(size_t n_caps)
  * in order to generate health metrics if the session doesn't see
  * a commensurate number of calls to ::notify_cap_release
  */
-void Session::notify_recall_sent(int const new_limit)
+void Session::notify_recall_sent(const size_t new_limit)
 {
   if (recalled_at.is_zero()) {
     // Entering recall phase, set up counters so we can later
@@ -882,7 +882,7 @@ void Session::_update_human_name()
   }
 }
 
-void Session::decode(bufferlist::iterator &p)
+void Session::decode(bufferlist::const_iterator &p)
 {
   info.decode(p);
 
@@ -972,7 +972,7 @@ int SessionFilter::parse(
        * Strict boolean parser.  Allow true/false/0/1.
        * Anything else is -EINVAL.
        */
-      auto is_true = [](const std::string &bstr, bool *out) -> bool
+      auto is_true = [](std::string_view bstr, bool *out) -> bool
       {
         assert(out != nullptr);
 
@@ -1043,10 +1043,10 @@ bool SessionFilter::match(
 
 std::ostream& operator<<(std::ostream &out, const Session &s)
 {
- if (s.get_human_name() == stringify(s.info.inst.name.num())) {
+ if (s.get_human_name() == stringify(s.get_client())) {
    out << s.get_human_name();
  } else {
-   out << s.get_human_name() << " (" << std::dec << s.info.inst.name.num() << ")";
+   out << s.get_human_name() << " (" << std::dec << s.get_client() << ")";
  }
  return out;
 }

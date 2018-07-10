@@ -29,7 +29,6 @@
 #include <functional>
 #include <deque>
 #include <chrono>
-#include <random>
 #include <stdexcept>
 #include <system_error>
 
@@ -48,6 +47,8 @@
 #include "byteorder.h"
 #include "shared_ptr.h"
 #include "PacketUtil.h"
+
+#include "include/random.h"
 
 struct tcp_hdr;
 
@@ -69,7 +70,7 @@ inline tcp_state operator|(tcp_state s1, tcp_state s2) {
   return tcp_state(uint16_t(s1) | uint16_t(s2));
 }
 
-inline std::ostream & operator<<(std::ostream & str, tcp_state s) {
+inline std::ostream & operator<<(std::ostream & str, const tcp_state& s) {
   switch (s) {
     case tcp_state::CLOSED: return str << "CLOSED";
     case tcp_state::LISTEN: return str << "LISTEN";
@@ -154,7 +155,7 @@ tcp_sequence hton(tcp_sequence ts) {
   return tcp_sequence { ::hton(ts.raw) };
 }
 
-inline std::ostream& operator<<(std::ostream& os, tcp_sequence s) {
+inline std::ostream& operator<<(std::ostream& os, const tcp_sequence& s) {
   return os << s.raw;
 }
 
@@ -234,7 +235,7 @@ class tcp {
 
    public:
     C_handle_delayed_ack(tcb *t): tc(t) { }
-    void do_request(int r) {
+    void do_request(uint64_t r) {
       tc->_nr_full_seg_received = 0;
       tc->output();
     }
@@ -245,7 +246,7 @@ class tcp {
 
    public:
     C_handle_retransmit(tcb *t): tc(t) { }
-    void do_request(int r) {
+    void do_request(uint64_t r) {
       tc->retransmit();
     }
   };
@@ -255,7 +256,7 @@ class tcp {
 
    public:
     C_handle_persist(tcb *t): tc(t) { }
-    void do_request(int r) {
+    void do_request(uint64_t r) {
       tc->persist();
     }
   };
@@ -265,7 +266,7 @@ class tcp {
 
    public:
     C_all_data_acked(tcb *t): tc(t) {}
-    void do_request(int fd_or_id) {
+    void do_request(uint64_t fd_or_id) {
       tc->close_final_cleanup();
     }
   };
@@ -274,7 +275,7 @@ class tcp {
     lw_shared_ptr<tcb> tc;
    public:
     C_actual_remove_tcb(tcb *t): tc(t->shared_from_this()) {}
-    void do_request(int r) {
+    void do_request(uint64_t r) {
       delete this;
     }
   };
@@ -381,11 +382,8 @@ class tcp {
       // 512 bits secretkey for ISN generating
       uint32_t key[16];
       isn_secret () {
-        std::random_device rd;
-        std::default_random_engine e(rd());
-        std::uniform_int_distribution<uint32_t> dist{};
         for (auto& k : key) {
-          k = dist(e);
+          k = ceph::util::generate_random_number<uint32_t>(0, std::numeric_limits<uint32_t>::max());
         }
       }
     };

@@ -34,7 +34,7 @@ static ostream& _prefix(std::ostream* _dout)
 int ErasureCodePluginJerasure::factory(const std::string& directory,
 		      ErasureCodeProfile &profile,
 		      ErasureCodeInterfaceRef *erasure_code,
-		      ostream *ss) {
+		      std::ostream *ss) {
     ErasureCodeJerasure *interface;
     std::string t;
     if (profile.find("technique") != profile.end())
@@ -71,8 +71,6 @@ int ErasureCodePluginJerasure::factory(const std::string& directory,
     return 0;
 }
 
-#ifndef BUILDING_FOR_EMBEDDED
-
 const char *__erasure_code_version() { return CEPH_GIT_NICE_VER; }
 
 int __erasure_code_init(char *plugin_name, char *directory)
@@ -85,5 +83,3 @@ int __erasure_code_init(char *plugin_name, char *directory)
   }
   return instance.add(plugin_name, new ErasureCodePluginJerasure());
 }
-
-#endif

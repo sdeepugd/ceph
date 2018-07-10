@@ -4,10 +4,11 @@
 #ifndef CEPH_OBJEXP_H
 #define CEPH_OBJEXP_H
 
-#include <errno.h>
-#include <iostream>
-#include <sstream>
+#include <atomic>
 #include <string>
+#include <cerrno>
+#include <sstream>
+#include <iostream>
 
 #include "auth/Crypto.h"
 
@@ -35,7 +36,6 @@
 #include "rgw_log.h"
 #include "rgw_formats.h"
 #include "rgw_usage.h"
-#include "rgw_replica_log.h"
 
 class RGWObjectExpirer {
 protected:
@@ -64,12 +64,15 @@ protected:
     void stop();
   };
 
-  OEWorker *worker;
-  atomic_t down_flag;
+  OEWorker *worker{nullptr};
+  std::atomic<bool> down_flag = { false };
 
 public:
   explicit RGWObjectExpirer(RGWRados *_store)
-    : store(_store) {
+    : store(_store), worker(NULL) {
+  }
+  ~RGWObjectExpirer() {
+    stop_processor();
   }
 
   int garbage_single_object(objexp_hint_entry& hint);

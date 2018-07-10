@@ -4,7 +4,6 @@
 #define CEPH_INCLUDE_FS_TYPES_H
 
 #include "types.h"
-#include "utime.h"
 
 // --------------------------------------
 // ino
@@ -20,10 +19,12 @@ struct inodeno_t {
   operator _inodeno_t() const { return val; }
 
   void encode(bufferlist& bl) const {
-    ::encode(val, bl);
+    using ceph::encode;
+    encode(val, bl);
   }
-  void decode(bufferlist::iterator& p) {
-    ::decode(val, p);
+  void decode(bufferlist::const_iterator& p) {
+    using ceph::decode;
+    decode(val, p);
   }
 } __attribute__ ((__may_alias__));
 WRITE_CLASS_ENCODER(inodeno_t)
@@ -33,19 +34,20 @@ struct denc_traits<inodeno_t> {
   static constexpr bool supported = true;
   static constexpr bool featured = false;
   static constexpr bool bounded = true;
+  static constexpr bool need_contiguous = true;
   static void bound_encode(const inodeno_t &o, size_t& p) {
     denc(o.val, p);
   }
   static void encode(const inodeno_t &o, buffer::list::contiguous_appender& p) {
     denc(o.val, p);
   }
-  static void decode(inodeno_t& o, buffer::ptr::iterator &p) {
+  static void decode(inodeno_t& o, buffer::ptr::const_iterator &p) {
     denc(o.val, p);
   }
 };
 
-inline ostream& operator<<(ostream& out, inodeno_t ino) {
-  return out << hex << ino.val << dec;
+inline ostream& operator<<(ostream& out, const inodeno_t& ino) {
+  return out << hex << "0x" << ino.val << dec;
 }
 
 namespace std {
@@ -62,7 +64,7 @@ namespace std {
 
 // file modes
 
-static inline bool file_mode_is_readonly(int mode) {
+inline bool file_mode_is_readonly(int mode) {
   return (mode & CEPH_FILE_MODE_WR) == 0;
 }
 
@@ -111,7 +113,7 @@ struct file_layout_t {
   bool is_valid() const;
 
   void encode(bufferlist& bl, uint64_t features) const;
-  void decode(bufferlist::iterator& p);
+  void decode(bufferlist::const_iterator& p);
   void dump(Formatter *f) const;
   static void generate_test_instances(list<file_layout_t*>& o);
 };

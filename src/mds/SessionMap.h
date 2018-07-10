@@ -123,9 +123,9 @@ public:
       state_seq++;
     }
   }
-  void decode(bufferlist::iterator &p);
+  void decode(bufferlist::const_iterator &p);
   void set_client_metadata(std::map<std::string, std::string> const &meta);
-  std::string get_human_name() const {return human_name;}
+  const std::string& get_human_name() const {return human_name;}
 
   // Ephemeral state for tracking progress of capability recalls
   utime_t recalled_at;  // When was I asked to SESSION_RECALL?
@@ -148,7 +148,7 @@ public:
   interval_set<inodeno_t> pending_prealloc_inos; // journaling prealloc, will be added to prealloc_inos
 
   void notify_cap_release(size_t n_caps);
-  void notify_recall_sent(int const new_limit);
+  void notify_recall_sent(const size_t new_limit);
   void clear_recalled_at();
 
   inodeno_t next_ino() const {
@@ -330,7 +330,11 @@ public:
     num_trim_flushes_warnings(0),
     num_trim_requests_warnings(0) { }
   ~Session() override {
-    assert(!item_session_list.is_on_list());
+    if (state == STATE_CLOSED) {
+      item_session_list.remove_myself();
+    } else {
+      assert(!item_session_list.is_on_list());
+    }
     while (!preopen_out_queue.empty()) {
       preopen_out_queue.front()->put();
       preopen_out_queue.pop_front();
@@ -397,7 +401,7 @@ public:
   virtual void encode_header(bufferlist *header_bl);
   virtual void decode_header(bufferlist &header_bl);
   virtual void decode_values(std::map<std::string, bufferlist> &session_vals);
-  virtual void decode_legacy(bufferlist::iterator& blp);
+  virtual void decode_legacy(bufferlist::const_iterator& blp);
   void dump(Formatter *f) const;
 
   void set_rank(mds_rank_t r)
@@ -490,7 +494,7 @@ public:
   }
 
   // sessions
-  void decode_legacy(bufferlist::iterator& blp) override;
+  void decode_legacy(bufferlist::const_iterator& blp) override;
   bool empty() const { return session_map.empty(); }
   const ceph::unordered_map<entity_name_t, Session*> &get_sessions() const
   {
@@ -542,13 +546,6 @@ public:
 
   void dump();
 
-  void get_client_set(set<client_t>& s) {
-    for (ceph::unordered_map<entity_name_t,Session*>::iterator p = session_map.begin();
-	 p != session_map.end();
-	 ++p)
-      if (p->second->info.inst.name.is_client())
-	s.insert(p->second->info.inst.name.num());
-  }
   void get_client_session_set(set<Session*>& s) const {
     for (ceph::unordered_map<entity_name_t,Session*>::const_iterator p = session_map.begin();
 	 p != session_map.end();
@@ -557,13 +554,13 @@ public:
 	s.insert(p->second);
   }
 
-  void open_sessions(map<client_t,entity_inst_t>& client_map) {
+  void replay_open_sessions(map<client_t,entity_inst_t>& client_map) {
     for (map<client_t,entity_inst_t>::iterator p = client_map.begin(); 
 	 p != client_map.end(); 
 	 ++p) {
       Session *s = get_or_add_session(p->second);
       set_state(s, Session::STATE_OPEN);
-      version++;
+      replay_dirty_session(s);
     }
   }
 

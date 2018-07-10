@@ -12,15 +12,16 @@
 #if defined(WITH_RADOSGW_FCGI_FRONTEND)
 #include "rgw_fcgi.h"
 #endif
+
 #include "common/QueueRing.h"
+
+#include <atomic>
 
 struct RGWRequest
 {
   uint64_t id;
   struct req_state *s;
-  string req_str;
   RGWOp *op;
-  utime_t ts;
 
   explicit RGWRequest(uint64_t id) : id(id), s(NULL), op(NULL) {}
 
@@ -29,10 +30,6 @@ struct RGWRequest
   void init_state(req_state *_s) {
     s = _s;
   }
-
-  void log_format(struct req_state *s, const char *fmt, ...);
-  void log_init();
-  void log(struct req_state *s, const char *msg);
 }; /* RGWRequest */
 
 #if defined(WITH_RADOSGW_FCGI_FRONTEND)
@@ -56,10 +53,10 @@ struct RGWLoadGenRequest : public RGWRequest {
 	string method;
 	string resource;
 	int content_length;
-	atomic_t* fail_flag;
+	std::atomic<bool>* fail_flag = nullptr;
 
 RGWLoadGenRequest(uint64_t req_id, const string& _m, const  string& _r, int _cl,
-		atomic_t *ff)
+		std::atomic<bool> *ff)
 	: RGWRequest(req_id), method(_m), resource(_r), content_length(_cl),
 		fail_flag(ff) {}
 };

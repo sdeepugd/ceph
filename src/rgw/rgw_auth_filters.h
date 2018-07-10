@@ -60,7 +60,7 @@ class DecoratedApplier : public rgw::auth::IdentityApplier {
   }
 
 public:
-  DecoratedApplier(DecorateeT&& decoratee)
+  explicit DecoratedApplier(DecorateeT&& decoratee)
     : decoratee(std::forward<DecorateeT>(decoratee)) {
   }
 
@@ -78,6 +78,11 @@ public:
 
   uint32_t get_perm_mask() const override {
     return get_decoratee().get_perm_mask();
+  }
+
+  bool is_identity(
+    const boost::container::flat_set<Principal>& ids) const override {
+    return get_decoratee().is_identity(ids);
   }
 
   void to_str(std::ostream& out) const override {
@@ -107,7 +112,7 @@ public:
 
   template <typename U>
   ThirdPartyAccountApplier(RGWRados* const store,
-                           const rgw_user acct_user_override,
+                           const rgw_user &acct_user_override,
                            U&& decoratee)
     : DecoratedApplier<T>(std::move(decoratee)),
       store(store),
@@ -170,7 +175,7 @@ void ThirdPartyAccountApplier<T>::load_acct_info(RGWUserInfo& user_info) const
 
 template <typename T> static inline
 ThirdPartyAccountApplier<T> add_3rdparty(RGWRados* const store,
-                                         const rgw_user acct_user_override,
+                                         const rgw_user &acct_user_override,
                                          T&& t) {
   return ThirdPartyAccountApplier<T>(store, acct_user_override,
                                      std::forward<T>(t));

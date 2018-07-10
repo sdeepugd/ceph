@@ -12,6 +12,7 @@
  *
  */
 
+#include "include/compat.h"
 #include "common/errno.h"
 #include "common/ceph_argparse.h"
 #include <fstream>
@@ -135,7 +136,7 @@ int DataScan::main(const std::vector<const char*> &args)
   // Parse args
   // ==========
   if (args.size() < 1) {
-    usage();
+    cerr << "missing position argument" << std::endl;
     return -EINVAL;
   }
 
@@ -247,7 +248,6 @@ int DataScan::main(const std::vector<const char*> &args)
       command == "cleanup") {
     if (data_pool_name.empty()) {
       std::cerr << "Data pool not specified" << std::endl;
-      usage();
       return -EINVAL;
     }
 
@@ -364,9 +364,15 @@ int MetadataDriver::inject_unlinked_inode(
   // be ignoring dirfrags that exist
   inode.damage_flags |= (DAMAGE_STATS | DAMAGE_RSTATS | DAMAGE_FRAGTREE);
 
+  if (inono == MDS_INO_ROOT || MDS_INO_IS_MDSDIR(inono)) {
+    sr_t srnode;
+    srnode.seq = 1;
+    encode(srnode, inode.snap_blob);
+  }
+
   // Serialize
   bufferlist inode_bl;
-  ::encode(std::string(CEPH_FS_ONDISK_MAGIC), inode_bl);
+  encode(std::string(CEPH_FS_ONDISK_MAGIC), inode_bl);
   inode.encode(inode_bl, CEPH_FEATURES_SUPPORTED_DEFAULT);
 
   // Write
@@ -606,9 +612,9 @@ int DataScan::forall_objects(
         int r = ioctx.getxattr(oid, "scrub_tag", scrub_tag_bl);
         if (r >= 0) {
           std::string read_tag;
-          bufferlist::iterator q = scrub_tag_bl.begin();
+          auto q = scrub_tag_bl.cbegin();
           try {
-            ::decode(read_tag, q);
+            decode(read_tag, q);
             if (read_tag == filter_tag) {
               dout(20) << "skipping " << oid << " because it has the filter_tag"
                        << dendl;
@@ -775,7 +781,7 @@ int DataScan::scan_inodes()
                 + (i % guessed_layout.stripe_count)
                 * guessed_layout.stripe_unit + (osize - 1)
                 % guessed_layout.stripe_unit + 1;
-              incomplete_size = MAX(incomplete_size, upper_size);
+              incomplete_size = std::max(incomplete_size, upper_size);
             }
           } else if (r == -ENOENT) {
             // Absent object, treat as size 0 and ignore.
@@ -908,7 +914,7 @@ int DataScan::scan_links()
     int nlink;
     bool is_dir;
     link_info_t() : version(0), nlink(0), is_dir(false) {}
-    link_info_t(inodeno_t di, frag_t df, const string& n, const inode_t i) :
+    link_info_t(inodeno_t di, frag_t df, const string& n, const CInode::mempool_inode& i) :
       dirino(di), frag(df), name(n),
       version(i.version), nlink(i.nlink), is_dir(S_IFDIR & i.mode) {}
     dirfrag_t dirfrag() const {
@@ -954,7 +960,7 @@ int DataScan::scan_links()
       }
 
       for (auto& p : items) {
-	bufferlist::iterator q = p.second.begin();
+	auto q = p.second.cbegin();
 	string dname;
 	snapid_t last;
 	dentry_key_t::decode_helper(p.first, dname, last);
@@ -964,9 +970,9 @@ int DataScan::scan_links()
 
 	try {
 	  snapid_t dnfirst;
-	  ::decode(dnfirst, q);
+	  decode(dnfirst, q);
 	  char dentry_type;
-	  ::decode(dentry_type, q);
+	  decode(dentry_type, q);
 	  if (dentry_type == 'I') {
 	    InodeStore inode;
 	    inode.decode_bare(q);
@@ -1000,8 +1006,8 @@ int DataScan::scan_links()
 	  } else if (dentry_type == 'L') {
 	    inodeno_t ino;
 	    unsigned char d_type;
-	    ::decode(ino, q);
-	    ::decode(d_type, q);
+	    decode(ino, q);
+	    decode(d_type, q);
 
 	    if (step == SCAN_INOS) {
 	      remote_links[ino]++;
@@ -1166,7 +1172,7 @@ int DataScan::scan_frags()
 
     if (parent_r != -ENODATA) {
       try {
-        bufferlist::iterator q = parent_bl.begin();
+        auto q = parent_bl.cbegin();
         backtrace.decode(q);
       } catch (buffer::error &e) {
         dout(4) << "Corrupt backtrace on '" << oid << "': " << e << dendl;
@@ -1181,8 +1187,8 @@ int DataScan::scan_frags()
 
     if (layout_r != -ENODATA) {
       try {
-        bufferlist::iterator q = layout_bl.begin();
-        ::decode(loaded_layout, q);
+        auto q = layout_bl.cbegin();
+        decode(loaded_layout, q);
       } catch (buffer::error &e) {
         dout(4) << "Corrupt layout on '" << oid << "': " << e << dendl;
         if (!force_corrupt) {
@@ -1280,7 +1286,7 @@ int MetadataTool::read_fnode(
     return r;
   }
 
-  bufferlist::iterator old_fnode_iter = fnode_bl.begin();
+  auto old_fnode_iter = fnode_bl.cbegin();
   try {
     (*fnode).decode(old_fnode_iter);
   } catch (const buffer::error &err) {
@@ -1319,11 +1325,11 @@ int MetadataTool::read_dentry(inodeno_t parent_ino, frag_t frag,
   }
 
   try {
-    bufferlist::iterator q = vals[key].begin();
+    auto q = vals[key].cbegin();
     snapid_t dnfirst;
-    ::decode(dnfirst, q);
+    decode(dnfirst, q);
     char dentry_type;
-    ::decode(dentry_type, q);
+    decode(dentry_type, q);
     if (dentry_type == 'I') {
       inode->decode_bare(q);
       return 0;
@@ -1421,7 +1427,7 @@ int MetadataDriver::get_frag_of(
   inode_backtrace_t backtrace;
   if (parent_bl.length()) {
     try {
-      bufferlist::iterator q = parent_bl.begin();
+      auto q = parent_bl.cbegin();
       backtrace.decode(q);
       have_backtrace = true;
     } catch (buffer::error &e) {
@@ -1765,8 +1771,8 @@ int MetadataDriver::inject_linkage(
   dn_key.encode(key);
 
   bufferlist dentry_bl;
-  ::encode(snap, dentry_bl);
-  ::encode('I', dentry_bl);
+  encode(snap, dentry_bl);
+  encode('I', dentry_bl);
   inode.encode_bare(dentry_bl, CEPH_FEATURES_SUPPORTED_DEFAULT);
 
   // Write out

@@ -30,8 +30,10 @@
 #include "messages/MMonMap.h"
 #include "msg/Messenger.h"
 #include "include/assert.h"
+#include "mds/MDSMap.h"
 
 #include "include/cephfs/libcephfs.h"
+
 
 struct ceph_mount_info
 {
@@ -40,12 +42,12 @@ public:
     : default_perms(),
       mounted(false),
       inited(false),
-      client(NULL),
-      monclient(NULL),
-      messenger(NULL),
+      client(nullptr),
+      monclient(nullptr),
+      messenger(nullptr),
       cct(cct_)
   {
-    if (cct_ != nullptr) {
+    if (cct_) {
       cct->get();
     }
   }
@@ -56,7 +58,7 @@ public:
       shutdown();
       if (cct) {
 	cct->put();
-	cct = NULL;
+	cct = nullptr;
       }
     }
     catch (const std::exception& e) {
@@ -75,6 +77,13 @@ public:
 
     int ret;
 
+    {
+      MonClient mc_bootstrap(cct);
+      ret = mc_bootstrap.get_monmap_and_config();
+      if (ret < 0)
+	return ret;
+    }
+
     //monmap
     monclient = new MonClient(cct);
     ret = -CEPHFS_ERROR_MON_MAP_BUILD; //defined in libcephfs.h;
@@ -86,7 +95,7 @@ public:
 
     //at last the client
     ret = -CEPHFS_ERROR_NEW_CLIENT; //defined in libcephfs.h;
-    client = new Client(messenger, monclient);
+    client = new StandaloneClient(messenger, monclient);
     if (!client)
       goto fail;
 
@@ -153,15 +162,15 @@ public:
       messenger->shutdown();
       messenger->wait();
       delete messenger;
-      messenger = NULL;
+      messenger = nullptr;
     }
     if (monclient) {
       delete monclient;
-      monclient = NULL;
+      monclient = nullptr;
     }
     if (client) {
       delete client;
-      client = NULL;
+      client = nullptr;
     }
   }
 
@@ -177,10 +186,10 @@ public:
 
   int conf_read_file(const char *path_list)
   {
-    int ret = cct->_conf->parse_config_files(path_list, NULL, 0);
+    int ret = cct->_conf->parse_config_files(path_list, nullptr, 0);
     if (ret)
       return ret;
-    cct->_conf->apply_changes(NULL);
+    cct->_conf->apply_changes(nullptr);
     cct->_conf->complain_about_parse_errors(cct);
     return 0;
   }
@@ -193,19 +202,15 @@ public:
     ret = cct->_conf->parse_argv(args);
     if (ret)
 	return ret;
-    cct->_conf->apply_changes(NULL);
+    cct->_conf->apply_changes(nullptr);
     return 0;
   }
 
   int conf_parse_env(const char *name)
   {
     md_config_t *conf = cct->_conf;
-    vector<const char*> args;
-    env_to_vec(args, name);
-    int ret = conf->parse_argv(args);
-    if (ret)
-      return ret;
-    conf->apply_changes(NULL);
+    conf->parse_env(name);
+    conf->apply_changes(nullptr);
     return 0;
   }
 
@@ -214,7 +219,7 @@ public:
     int ret = cct->_conf->set_val(option, value);
     if (ret)
       return ret;
-    cct->_conf->apply_changes(NULL);
+    cct->_conf->apply_changes(nullptr);
     return 0;
   }
 
@@ -248,7 +253,7 @@ public:
 private:
   bool mounted;
   bool inited;
-  Client *client;
+  StandaloneClient *client;
   MonClient *monclient;
   Messenger *messenger;
   CephContext *cct;
@@ -262,7 +267,7 @@ static void do_out_buffer(bufferlist& outbl, char **outbuf, size_t *outbuflen)
       *outbuf = (char *)malloc(outbl.length());
       memcpy(*outbuf, outbl.c_str(), outbl.length());
     } else {
-      *outbuf = NULL;
+      *outbuf = nullptr;
     }
   }
   if (outbuflen)
@@ -276,7 +281,7 @@ static void do_out_buffer(string& outbl, char **outbuf, size_t *outbuflen)
       *outbuf = (char *)malloc(outbl.length());
       memcpy(*outbuf, outbl.c_str(), outbl.length());
     } else {
-      *outbuf = NULL;
+      *outbuf = nullptr;
     }
   }
   if (outbuflen)
@@ -332,9 +337,10 @@ extern "C" int ceph_create(struct ceph_mount_info **cmount, const char * const i
 
   CephContext *cct = common_preinit(iparams, CODE_ENVIRONMENT_LIBRARY, 0);
   cct->_conf->parse_env(); // environment variables coverride
-  cct->_conf->apply_changes(NULL);
+  cct->_conf->apply_changes(nullptr);
   int ret = ceph_create_with_context(cmount, cct);
   cct->put();
+  cct = nullptr;
   return ret;
 }
 
@@ -348,6 +354,7 @@ extern "C" int ceph_release(struct ceph_mount_info *cmount)
   if (cmount->is_mounted())
     return -EISCONN;
   delete cmount;
+  cmount = nullptr;
   return 0;
 }
 
@@ -355,6 +362,7 @@ extern "C" void ceph_shutdown(struct ceph_mount_info *cmount)
 {
   cmount->shutdown();
   delete cmount;
+  cmount = nullptr;
 }
 
 extern "C" int ceph_conf_read_file(struct ceph_mount_info *cmount, const char *path)
@@ -382,7 +390,7 @@ extern "C" int ceph_conf_set(struct ceph_mount_info *cmount, const char *option,
 extern "C" int ceph_conf_get(struct ceph_mount_info *cmount, const char *option,
 			     char *buf, size_t len)
 {
-  if (buf == NULL) {
+  if (!buf) {
     return -EINVAL;
   }
   return cmount->conf_get(option, buf, len);
@@ -457,6 +465,15 @@ extern "C" struct UserPerm *ceph_mount_perms(struct ceph_mount_info *cmount)
   return &cmount->default_perms;
 }
 
+extern "C" int ceph_mount_perms_set(struct ceph_mount_info *cmount,
+				    struct UserPerm *perms)
+{
+  if (cmount->is_mounted())
+    return -EISCONN;
+  cmount->default_perms = *perms;
+  return 0;
+}
+
 extern "C" int ceph_statfs(struct ceph_mount_info *cmount, const char *path,
 			   struct statvfs *stbuf)
 {
@@ -504,7 +521,7 @@ extern "C" struct dirent * ceph_readdir(struct ceph_mount_info *cmount, struct c
   if (!cmount->is_mounted()) {
     /* Client::readdir also sets errno to signal errors. */
     errno = ENOTCONN;
-    return NULL;
+    return nullptr;
   }
   return cmount->get_client()->readdir(reinterpret_cast<dir_result_t*>(dirp));
 }
@@ -1073,6 +1090,21 @@ extern "C" int ceph_get_path_pool_name(struct ceph_mount_info *cmount, const cha
   return name.length();
 }
 
+extern "C" int ceph_get_default_data_pool_name(struct ceph_mount_info *cmount, char *buf, size_t len)
+{
+  if (!cmount->is_mounted())
+    return -ENOTCONN;
+  int64_t pool_id = cmount->get_client()->get_default_pool_id();
+ 
+  string name = cmount->get_client()->get_pool_name(pool_id);
+  if (len == 0)
+    return name.length();
+  if (name.length() > len)
+    return -ERANGE;
+  strncpy(buf, name.c_str(), len);
+  return name.length(); 
+}
+
 extern "C" int ceph_get_file_layout(struct ceph_mount_info *cmount, int fh, int *stripe_unit, int *stripe_count, int *object_size, int *pg_pool)
 {
   file_layout_t l;
@@ -1224,9 +1256,11 @@ extern "C" int ceph_get_osd_crush_location(struct ceph_mount_info *cmount,
     string& name = it->second;
     needed += type.size() + name.size() + 2;
     if (needed <= len) {
-      strcpy(path + cur, type.c_str());
+      if (path)
+	strcpy(path + cur, type.c_str());
       cur += type.size() + 1;
-      strcpy(path + cur, name.c_str());
+      if (path)
+	strcpy(path + cur, name.c_str());
       cur += name.size() + 1;
     }
   }
@@ -1374,41 +1408,7 @@ extern "C" int ceph_ll_lookup_inode(
     struct inodeno_t ino,
     Inode **inode)
 {
-  int r = (cmount->get_client())->lookup_ino(ino, cmount->default_perms, inode);
-  if (r) {
-    return r;
-  }
-
-  assert(inode != NULL);
-  assert(*inode != NULL);
-
-  // Request the parent inode, so that we can look up the name
-  Inode *parent;
-  r = (cmount->get_client())->lookup_parent(*inode, cmount->default_perms, &parent);
-  if (r && r != -EINVAL) {
-    // Unexpected error
-    (cmount->get_client())->ll_forget(*inode, 1);
-    return r;
-  } else if (r == -EINVAL) {
-    // EINVAL indicates node without parents (root), drop out now
-    // and don't try to look up the non-existent dentry.
-    return 0;
-  }
-  // FIXME: I don't think this works; lookup_parent() returns 0 if the parent
-  // is already in cache
-  assert(parent != NULL);
-
-  // Finally, get the name (dentry) of the requested inode
-  r = (cmount->get_client())->lookup_name(*inode, parent, cmount->default_perms);
-  if (r) {
-    // Unexpected error
-    (cmount->get_client())->ll_forget(parent, 1);
-    (cmount->get_client())->ll_forget(*inode, 1);
-    return r;
-  }
-
-  (cmount->get_client())->ll_forget(parent, 1);
-  return 0;
+  return (cmount->get_client())->ll_lookup_inode(ino, cmount->default_perms, inode);
 }
 
 extern "C" int ceph_ll_lookup(struct ceph_mount_info *cmount,
@@ -1520,6 +1520,12 @@ extern "C" int ceph_ll_fsync(class ceph_mount_info *cmount,
   return (cmount->get_client()->ll_fsync(fh, syncdataonly));
 }
 
+extern "C" int ceph_ll_sync_inode(class ceph_mount_info *cmount,
+			     Inode *in, int syncdataonly)
+{
+  return (cmount->get_client()->ll_sync_inode(in, syncdataonly));
+}
+
 extern "C" off_t ceph_ll_lseek(class ceph_mount_info *cmount,
 				Fh *fh, off_t offset, int whence)
 {
@@ -1537,14 +1543,14 @@ extern "C" int64_t ceph_ll_readv(class ceph_mount_info *cmount,
 				 struct Fh *fh, const struct iovec *iov,
 				 int iovcnt, int64_t off)
 {
-  return -1; // TODO:  implement
+  return (cmount->get_client()->ll_readv(fh, iov, iovcnt, off));
 }
 
 extern "C" int64_t ceph_ll_writev(class ceph_mount_info *cmount,
 				  struct Fh *fh, const struct iovec *iov,
 				  int iovcnt, int64_t off)
 {
-  return -1; // TODO:  implement
+  return (cmount->get_client()->ll_writev(fh, iov, iovcnt, off));
 }
 
 extern "C" int ceph_ll_close(class ceph_mount_info *cmount, Fh* fh)
@@ -1705,6 +1711,12 @@ extern "C" int ceph_ll_setlk(struct ceph_mount_info *cmount,
   return (cmount->get_client()->ll_setlk(fh, fl, owner, sleep));
 }
 
+extern "C" int ceph_ll_delegation(struct ceph_mount_info *cmount, Fh *fh,
+				  unsigned cmd, ceph_deleg_cb_t cb, void *priv)
+{
+  return (cmount->get_client()->ll_delegation(fh, cmd, cb, priv));
+}
+
 extern "C" uint32_t ceph_ll_stripe_unit(class ceph_mount_info *cmount,
 					Inode *in)
 {
@@ -1759,4 +1771,18 @@ extern "C" void ceph_buffer_free(char *buf)
   if (buf) {
     free(buf);
   }
+}
+
+extern "C" uint32_t ceph_get_cap_return_timeout(class ceph_mount_info *cmount)
+{
+  if (!cmount->is_mounted())
+    return 0;
+  return cmount->get_client()->mdsmap->get_session_autoclose().sec();
+}
+
+extern "C" int ceph_set_deleg_timeout(class ceph_mount_info *cmount, uint32_t timeout)
+{
+  if (!cmount->is_mounted())
+    return -ENOTCONN;
+  return cmount->get_client()->set_deleg_timeout(timeout);
 }

@@ -17,17 +17,24 @@
 
 #include "common/RefCountedObj.h"
 #include "common/Mutex.h"
-#include "include/Spinlock.h"
+#include "include/spinlock.h"
 #include "OSDCap.h"
 #include "Watch.h"
 #include "OSDMap.h"
+
+//#define PG_DEBUG_REFS
 
 struct Session;
 typedef boost::intrusive_ptr<Session> SessionRef;
 struct Backoff;
 typedef boost::intrusive_ptr<Backoff> BackoffRef;
 class PG;
+#ifdef PG_DEBUG_REFS
+#include "common/tracked_int_ptr.hpp"
+typedef TrackedIntPtr<PG> PGRef;
+#else
 typedef boost::intrusive_ptr<PG> PGRef;
+#endif
 
 /*
  * A Backoff represents one instance of either a PG or an OID
@@ -66,7 +73,7 @@ struct Backoff : public RefCountedObject {
     STATE_ACKED = 2,   ///< backoff acked
     STATE_DELETING = 3 ///< backoff deleted, but un-acked
   };
-  std::atomic_int state = {STATE_NEW};
+  std::atomic<int> state = {STATE_NEW};
   spg_t pgid;          ///< owning pgid
   uint64_t id = 0;     ///< unique id (within the Session)
 
@@ -130,14 +137,14 @@ struct Session : public RefCountedObject {
   Mutex session_dispatch_lock;
   boost::intrusive::list<OpRequest> waiting_on_map;
 
-  Spinlock sent_epoch_lock;
+  ceph::spinlock sent_epoch_lock;
   epoch_t last_sent_epoch;
-  Spinlock received_map_lock;
+  ceph::spinlock received_map_lock;
   epoch_t received_map_epoch; // largest epoch seen in MOSDMap from here
 
   /// protects backoffs; orders inside Backoff::lock *and* PG::backoff_lock
   Mutex backoff_lock;
-  std::atomic_int backoff_count= {0};  ///< simple count of backoffs
+  std::atomic<int> backoff_count= {0};  ///< simple count of backoffs
   map<spg_t,map<hobject_t,set<BackoffRef>>> backoffs;
 
   std::atomic<uint64_t> backoff_seq = {0};
@@ -170,7 +177,7 @@ struct Session : public RefCountedObject {
     }
     auto p = i->second.lower_bound(oid);
     if (p != i->second.begin() &&
-	p->first > oid) {
+	(p == i->second.end() || p->first > oid)) {
       --p;
     }
     if (p != i->second.end()) {

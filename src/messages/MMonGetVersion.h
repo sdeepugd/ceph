@@ -38,17 +38,18 @@ public:
   }
 
   void encode_payload(uint64_t features) override {
-    ::encode(handle, payload);
-    ::encode(what, payload);
+    using ceph::encode;
+    encode(handle, payload);
+    encode(what, payload);
   }
 
   void decode_payload() override {
-    bufferlist::iterator p = payload.begin();
-    ::decode(handle, p);
-    ::decode(what, p);
+    auto p = payload.cbegin();
+    decode(handle, p);
+    decode(what, p);
   }
 
-  ceph_tid_t handle;
+  ceph_tid_t handle = 0;
   string what;
 
 private:

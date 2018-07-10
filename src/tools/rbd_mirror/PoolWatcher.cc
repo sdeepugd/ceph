@@ -69,7 +69,7 @@ private:
 
 template <typename I>
 PoolWatcher<I>::PoolWatcher(Threads<I> *threads, librados::IoCtx &remote_io_ctx,
-                            Listener &listener)
+                            pool_watcher::Listener &listener)
   : m_threads(threads), m_remote_io_ctx(remote_io_ctx), m_listener(listener),
     m_lock(librbd::util::unique_lock_name("rbd::mirror::PoolWatcher", this)) {
   m_mirroring_watcher = new MirroringWatcher(m_remote_io_ctx,
@@ -304,7 +304,7 @@ void PoolWatcher<I>::handle_get_mirror_uuid(int r) {
 
     m_pending_mirror_uuid = "";
     if (r >= 0) {
-      bufferlist::iterator it = m_out_bl.begin();
+      auto it = m_out_bl.cbegin();
       r = librbd::cls_client::mirror_uuid_get_finish(
         &it, &m_pending_mirror_uuid);
     }
@@ -362,10 +362,11 @@ void PoolWatcher<I>::schedule_refresh_images(double interval) {
   }
 
   m_image_ids_invalid = true;
-  m_timer_ctx = new FunctionContext([this](int r) {
-      process_refresh_images();
-    });
-  m_threads->timer->add_event_after(interval, m_timer_ctx);
+  m_timer_ctx = m_threads->timer->add_event_after(
+    interval,
+    new FunctionContext([this](int r) {
+	process_refresh_images();
+      }));
 }
 
 template <typename I>
@@ -479,7 +480,7 @@ void PoolWatcher<I>::notify_listener() {
   }
 
   if (!removed_image_ids.empty()) {
-    m_listener.handle_update(mirror_uuid, {}, removed_image_ids);
+    m_listener.handle_update(mirror_uuid, {}, std::move(removed_image_ids));
     removed_image_ids.clear();
   }
 
@@ -529,7 +530,8 @@ void PoolWatcher<I>::notify_listener() {
     mirror_uuid = m_mirror_uuid;
   }
 
-  m_listener.handle_update(mirror_uuid, added_image_ids, removed_image_ids);
+  m_listener.handle_update(mirror_uuid, std::move(added_image_ids),
+                           std::move(removed_image_ids));
 
   {
     Mutex::Locker locker(m_lock);

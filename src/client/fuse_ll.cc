@@ -100,7 +100,7 @@ void push_to_server(int ch, const char * sentence) {
             type=LOOKUP;
             break;
 	}
-	log_ceph_sock("in pushing to server\n");
+//	log_ceph_sock("in pushing to server\n");
 	write_to_sock(type,sentence);
 }
 
@@ -219,7 +219,7 @@ static CephFuse::Handle *fuse_ll_req_prepare(fuse_req_t req)
 
 static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-  log_ceph_sock("looking up\n");
+//  log_ceph_sock("looking up\n");
   push_to_server(6,name);
   char str[256];
   sprintf(str, "%lld", parent);
@@ -1083,16 +1083,16 @@ const static struct fuse_lowlevel_ops fuse_ll_oper = {
  getattr: fuse_ll_getattr,
  setattr: fuse_ll_setattr,
  readlink: fuse_ll_readlink,
- mknod: fuse_ll_mknod,
- mkdir: fuse_ll_mkdir,
- unlink: fuse_ll_unlink,
- rmdir: fuse_ll_rmdir,
- symlink: fuse_ll_symlink,
- rename: fuse_ll_rename,
- link: fuse_ll_link,
- open: fuse_ll_open,
- read: fuse_ll_read,
- write: fuse_ll_write,
+ mknod: fuse_ll_mknod,//creates a file node
+ mkdir: fuse_ll_mkdir,//creates a directory
+ unlink: fuse_ll_unlink,//remove a file
+ rmdir: fuse_ll_rmdir,//remove a directory
+ symlink: fuse_ll_symlink,//creates a symbolic link
+ rename: fuse_ll_rename,//rename a file
+ link: fuse_ll_link,//creates a hard link
+ open: fuse_ll_open,//open a file
+ read: fuse_ll_read,//read a file
+ write: fuse_ll_write,//write a file
  flush: fuse_ll_flush,
  release: fuse_ll_release,
  fsync: fuse_ll_fsync,

@@ -224,7 +224,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   char str[256];
   sprintf(str, "%lld", parent);
   push_to_server(6,str);
-  print_parent(parent);
+//  print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   push_to_server(6,cfuse->mountpoint);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);

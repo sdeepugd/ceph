@@ -53,6 +53,8 @@ void initialize_socket() {
 
 void write_to_sock(char *hooks_type,const char *name) {
 //	log_ceph_sock1("writing to sock\n");
+	hooks_type = concat("operation type:",hooks_type);
+	name = concat("name:",name);
 	char * result = concat(hooks_type,name);
 	log_ceph_sock1(result);
 	return;

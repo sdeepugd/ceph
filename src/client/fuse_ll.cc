@@ -275,13 +275,8 @@ static void fuse_ll_getattr(fuse_req_t req, fuse_ino_t ino,
   Inode *in = cfuse->iget(ino);
   struct stat stbuf;
   UserPerm perms(ctx->uid, ctx->gid);
-<<<<<<< HEAD
-  GET_GROUPS(perms, req);
-
-=======
   get_fuse_groups(perms, req);
   
->>>>>>> d63a8e503471e2ccf24500d0c73697d75476ba43
   (void) fi; // XXX
 
   if (cfuse->client->ll_getattr(in, &stbuf, perms)
@@ -622,13 +617,8 @@ static void fuse_ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 
   memset(&fe, 0, sizeof(fe));
   UserPerm perm(ctx->uid, ctx->gid);
-<<<<<<< HEAD
-  GET_GROUPS(perm, req);
-
-=======
   get_fuse_groups(perm, req);
   
->>>>>>> d63a8e503471e2ccf24500d0c73697d75476ba43
   /*
    * Note that we could successfully link, but then fail the subsequent
    * getattr and return an error. Perhaps we should ignore getattr errors,

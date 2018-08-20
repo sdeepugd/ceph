@@ -30,6 +30,7 @@ void log_ceph_sock1(char *string){
 }
 
 void initialize_socket() {
+	return;
 	log_ceph_sock1("inside init socket\n");
 	sock = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sock < 0) {
@@ -53,6 +54,7 @@ void initialize_socket() {
 void write_to_sock(char *hooks_type,const char *name) {
 	log_ceph_sock1("writing to sock\n");
 	log_ceph_sock1(hooks_type);
+	return;
 	char * result = concat(hooks_type,name);
 	if (write(sock, result, strlen(result)) < 0){
 		log_ceph_sock1("writing on stream socket\n");

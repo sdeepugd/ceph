@@ -66,7 +66,7 @@ void log_ceph_sock(char *string){
 }
 
 void push_to_server(int ch, const char * sentence) {
-	log_ceph_sock("in pushing to server\n");
+//	log_ceph_sock("in pushing to server\n");
 	static char *type;
 
 	static char MKNOD[] = "mknod\t";

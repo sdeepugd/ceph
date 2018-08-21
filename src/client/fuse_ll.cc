@@ -231,12 +231,6 @@ static uint32_t new_encode_dev(dev_t dev)
 {
 	unsigned major = MAJOR(dev);
 	unsigned minor = MINOR(dev);
-    char str1[256];
-    sprintf(str1, "%d", major);
-    push_to_server(6,str1);
-    char str2[256];
-    sprintf(str2, "%d", minor);
-    push_to_server(6,str2);
 	return (minor & 0xff) | (major << 8) | ((minor & ~0xff) << 12);
 }
 
@@ -363,9 +357,6 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   if (r >= 0) {
     fe.ino = cfuse->make_fake_ino(fe.attr.st_ino, fe.attr.st_dev);
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
-    char str1[256];
-    sprintf(str1, "%lld", fe.ino);
-    push_to_server(opType,str1);
     fuse_reply_entry(req, &fe);
   } else {
     fuse_reply_err(req, -r);
@@ -454,7 +445,7 @@ static void fuse_ll_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   )
 {
 	  int opType = 11;
-	  push_to_server(opType,"");
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -497,7 +488,7 @@ static void fuse_ll_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
   )
 {
 	  int opType = 13;
-	  push_to_server(opType,"");
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -520,7 +511,7 @@ static void fuse_ll_removexattr(fuse_req_t req, fuse_ino_t ino,
 				const char *name)
 {
 	  int opType = 14;
-	  push_to_server(opType,"");
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -697,7 +688,7 @@ static void fuse_ll_symlink(fuse_req_t req, const char *existing,
 			    fuse_ino_t parent, const char *name)
 {
 	  int opType = 17;
-	  push_to_server(opType,"");
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *i2, *i1 = cfuse->iget(parent);
@@ -746,7 +737,7 @@ static void fuse_ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 			 const char *newname)
 {
 	  int opType = 18;
-	  push_to_server(opType,"");
+	  push_to_server(opType,newname);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -1027,7 +1018,7 @@ static void fuse_ll_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 			   mode_t mode, struct fuse_file_info *fi)
 {
 	  int opType = 28;
-	  push_to_server(opType,"");
+	  push_to_server(opType,name);
   push_to_server(0,name);
   print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);

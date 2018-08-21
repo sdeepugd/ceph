@@ -96,7 +96,7 @@
 #include "include/stat.h"
 
 #include "include/cephfs/ceph_statx.h"
-#include "fs_action_scheduler.cc"
+
 #if HAVE_GETGROUPLIST
 #include <grp.h>
 #include <pwd.h>
@@ -11610,8 +11610,7 @@ int Client::_mknod(Inode *dir, const char *name, mode_t mode, dev_t rdev,
   req->head.args.mknod.rdev = rdev;
   req->dentry_drop = CEPH_CAP_FILE_SHARED;
   req->dentry_unless = CEPH_CAP_FILE_EXCL;
-  char* sentence = concat("path ->>",path.get_path().c_str());
-  log_ceph_sock1(sentence);
+
   bufferlist xattrs_bl;
   int res = _posix_acl_create(dir, &mode, xattrs_bl, perms);
   if (res < 0)

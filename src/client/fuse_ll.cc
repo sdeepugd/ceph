@@ -220,20 +220,20 @@ static CephFuse::Handle *fuse_ll_req_prepare(fuse_req_t req)
 static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 //  log_ceph_sock("looking up\n");
-  push_to_server(6,name);
+  int opType = 6;
+  push_to_server(opType,name);
   char str[256];
   sprintf(str, "%lld", parent);
   push_to_server(6,str);
 //  print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
-  push_to_server(6,cfuse->mountpoint);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;
   Inode *i2, *i1 = cfuse->iget(parent); // see below
+
   int r;
   UserPerm perms(ctx->uid, ctx->gid);
   get_fuse_groups(perms, req);
-
   if (!i1)
   {
     r = cfuse->client->lookup_ino(parent, perms, &i1);
@@ -247,7 +247,6 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   r = cfuse->client->ll_lookup(i1, name, &fe.attr, &i2, perms);
   if (r >= 0) {
     fe.ino = cfuse->make_fake_ino(fe.attr.st_ino, fe.attr.st_dev);
-    print_parent(fe.ino);
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
     fuse_reply_entry(req, &fe);
   } else {

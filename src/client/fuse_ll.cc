@@ -89,7 +89,6 @@ void push_to_server(int ch, const char * sentence) {
 	static char SYMLINK[] = "SYMLINK\t";
 	static char LINK[] = "LINK\t";
 	static char OPEN[] = "OPEN\t";
-	static char READ[] = "READ\t";
 	static char FLUSH[] = "unlink\t";
 	static char IOCTL[] = "IOCTL\t";
 	static char RELEASE[] = "RELEASE\t";
@@ -101,7 +100,6 @@ void push_to_server(int ch, const char * sentence) {
 	static char STATFS[] = "STATFS\t";
 	static char GETLK[] = "GETLK\t";
 	static char SETLK[] = "SETLK\t";
-	static char WRITE[] = "WRITE\t";
 	static char RELEASEDIR[] = "RELEASEDIR\t";
 
 
@@ -371,7 +369,7 @@ static void fuse_ll_forget(fuse_req_t req, fuse_ino_t ino,
 			   long unsigned nlookup)
 {
 	  int opType = 8;
-	  push_to_server(opType,name);
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   cfuse->client->ll_forget(cfuse->iget(ino), nlookup+1);
   fuse_reply_none(req);
@@ -381,7 +379,7 @@ static void fuse_ll_getattr(fuse_req_t req, fuse_ino_t ino,
 			    struct fuse_file_info *fi)
 {
 	  int opType = 9;
-	  push_to_server(opType,name);
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);

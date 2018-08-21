@@ -222,9 +222,9 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  log_ceph_sock("looking up\n");
   int opType = 6;
   push_to_server(opType,name);
-  char str[256];
-  sprintf(str, "%lld", parent);
-  push_to_server(6,str);
+//  char str[256];
+//  sprintf(str, "%lld", parent);
+//  push_to_server(6,str);
 //  print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
@@ -248,6 +248,9 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   if (r >= 0) {
     fe.ino = cfuse->make_fake_ino(fe.attr.st_ino, fe.attr.st_dev);
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
+    char str1[256];
+    sprintf(str1, "%lld", fe.ino);
+    push_to_server(opType,str);
     fuse_reply_entry(req, &fe);
   } else {
     fuse_reply_err(req, -r);

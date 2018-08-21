@@ -221,7 +221,7 @@ void print_inode(fuse_ino_t parent_no){
       exit(1);
    }
 
-   fprintf(fptr,"%ld\n", parent_no);
+   fprintf(fptr,"inode%ld\n", parent_no);
    fclose(fptr);
 }
 

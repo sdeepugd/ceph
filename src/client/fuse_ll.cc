@@ -250,7 +250,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
     char str1[256];
     sprintf(str1, "%lld", fe.ino);
-    push_to_server(opType,str);
+    push_to_server(opType,str1);
     fuse_reply_entry(req, &fe);
   } else {
     fuse_reply_err(req, -r);

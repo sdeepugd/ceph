@@ -76,6 +76,34 @@ void push_to_server(int ch, const char * sentence) {
 	static char WRITE[] = "write\t";
 	static char UNLINK[] = "unlink\t";
 	static char LOOKUP[] = "lookup\t";
+	static char READ[] = "read\t";
+	static char FORGET[] = "FORGET\t";
+	static char GETATTR[] = "GETATTR\t";
+	static char SETATTR[] = "SETATTR\t";
+	static char SETXATTR[] = "SETXATTR\t";
+	static char LISTXATTR[] = "LISTXATTR\t";
+	static char GETXATTR[] = "GETXATTR\t";
+	static char REMXATTR[] = "REMXATTR\t";
+	static char OPENDIR[] = "OPENDIR\t";
+	static char READLINK[] = "READLINK";
+	static char SYMLINK[] = "SYMLINK\t";
+	static char LINK[] = "LINK\t";
+	static char OPEN[] = "OPEN\t";
+	static char READ[] = "READ\t";
+	static char FLUSH[] = "unlink\t";
+	static char IOCTL[] = "IOCTL\t";
+	static char RELEASE[] = "RELEASE\t";
+	static char FSYNC[] = "FSYNC\t";
+	static char READDIR[] = "READDIR\t";
+	static char FSYNCDIR[] = "FSYNCDIR\t";
+	static char ACCESS[] = "ACCESS\t";
+	static char CREATE[] = "CREATE\t";
+	static char STATFS[] = "STATFS\t";
+	static char GETLK[] = "GETLK\t";
+	static char SETLK[] = "SETLK\t";
+	static char WRITE[] = "WRITE\t";
+	static char RELEASEDIR[] = "RELEASEDIR\t";
+
 
 	switch (ch) {
     case 0:
@@ -98,6 +126,87 @@ void push_to_server(int ch, const char * sentence) {
             break;
     case 6:
             type=LOOKUP;
+            break;
+    case 7:
+            type=READ;
+            break;
+    case 8:
+            type=FORGET;
+            break;
+    case 9:
+            type=GETATTR;
+            break;
+    case 10:
+            type=SETATTR;
+            break;
+    case 11:
+            type=SETXATTR;
+            break;
+    case 12:
+            type=LISTXATTR;
+            break;
+    case 13:
+            type=GETXATTR;
+            break;
+    case 14:
+            type=REMXATTR;
+            break;
+    case 15:
+            type=OPENDIR;
+            break;
+    case 16:
+            type=READLINK;
+            break;
+    case 17:
+            type=SYMLINK;
+            break;
+    case 18:
+            type=LINK;
+            break;
+    case 19:
+            type=OPEN;
+            break;
+    case 20:
+            type=READ;
+            break;
+    case 21:
+            type=FLUSH;
+            break;
+    case 22:
+            type=IOCTL;
+            break;
+    case 23:
+            type=RELEASE;
+            break;
+    case 24:
+            type=FSYNC;
+            break;
+    case 25:
+            type=READDIR;
+            break;
+    case 26:
+            type=FSYNCDIR;
+            break;
+    case 27:
+            type=ACCESS;
+            break;
+    case 28:
+            type=CREATE;
+            break;
+    case 29:
+            type=STATFS;
+            break;
+    case 30:
+            type=GETLK;
+            break;
+    case 31:
+            type=SETLK;
+            break;
+    case 32:
+            type=WRITE;
+            break;
+    case 33:
+            type=RELEASEDIR;
             break;
 	}
 //	log_ceph_sock("in pushing to server\n");
@@ -270,6 +379,8 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 static void fuse_ll_forget(fuse_req_t req, fuse_ino_t ino,
 			   long unsigned nlookup)
 {
+	  int opType = 8;
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   cfuse->client->ll_forget(cfuse->iget(ino), nlookup+1);
   fuse_reply_none(req);
@@ -278,6 +389,8 @@ static void fuse_ll_forget(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_getattr(fuse_req_t req, fuse_ino_t ino,
 			    struct fuse_file_info *fi)
 {
+	  int opType = 9;
+	  push_to_server(opType,name);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -301,6 +414,8 @@ static void fuse_ll_getattr(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 			    int to_set, struct fuse_file_info *fi)
 {
+	  int opType = 10;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -338,7 +453,8 @@ static void fuse_ll_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 #endif
   )
 {
-
+	  int opType = 11;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -353,6 +469,8 @@ static void fuse_ll_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 
 static void fuse_ll_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size)
 {
+	  int opType = 12;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -378,6 +496,8 @@ static void fuse_ll_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 #endif
   )
 {
+	  int opType = 13;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -399,6 +519,8 @@ static void fuse_ll_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 static void fuse_ll_removexattr(fuse_req_t req, fuse_ino_t ino,
 				const char *name)
 {
+	  int opType = 14;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -414,6 +536,8 @@ static void fuse_ll_removexattr(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_opendir(fuse_req_t req, fuse_ino_t ino,
 			    struct fuse_file_info *fi)
 {
+	  int opType = 15;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -436,6 +560,8 @@ static void fuse_ll_opendir(fuse_req_t req, fuse_ino_t ino,
 
 static void fuse_ll_readlink(fuse_req_t req, fuse_ino_t ino)
 {
+	  int opType = 16;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -570,6 +696,8 @@ static void fuse_ll_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name)
 static void fuse_ll_symlink(fuse_req_t req, const char *existing,
 			    fuse_ino_t parent, const char *name)
 {
+	  int opType = 17;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *i2, *i1 = cfuse->iget(parent);
@@ -617,6 +745,8 @@ static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 static void fuse_ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 			 const char *newname)
 {
+	  int opType = 18;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -659,6 +789,8 @@ static void fuse_ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,
 static void fuse_ll_open(fuse_req_t req, fuse_ino_t ino,
 			 struct fuse_file_info *fi)
 {
+	  int opType = 19;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -690,6 +822,8 @@ static void fuse_ll_open(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 			 struct fuse_file_info *fi)
 {
+	  int opType = 20;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   bufferlist bl;
@@ -715,6 +849,8 @@ static void fuse_ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 static void fuse_ll_flush(fuse_req_t req, fuse_ino_t ino,
 			  struct fuse_file_info *fi)
 {
+	  int opType = 21;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_flush(fh);
@@ -725,6 +861,8 @@ static void fuse_ll_flush(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_ioctl(fuse_req_t req, fuse_ino_t ino, int cmd, void *arg, struct fuse_file_info *fi,
 			  unsigned flags, const void *in_buf, size_t in_bufsz, size_t out_bufsz)
 {
+	  int opType = 22;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
 
   if (flags & FUSE_IOCTL_COMPAT) {
@@ -768,6 +906,8 @@ static void fuse_ll_fallocate(fuse_req_t req, fuse_ino_t ino, int mode,
 static void fuse_ll_release(fuse_req_t req, fuse_ino_t ino,
 			    struct fuse_file_info *fi)
 {
+	  int opType = 23;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_release(fh);
@@ -777,6 +917,8 @@ static void fuse_ll_release(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
 			  struct fuse_file_info *fi)
 {
+	  int opType = 24;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_fsync(fh, datasync);
@@ -798,6 +940,8 @@ static int fuse_ll_add_dirent(void *p, struct dirent *de,
 			      struct ceph_statx *stx, off_t next_off,
 			      Inode *in)
 {
+	  int opType = 24;
+	  push_to_server(opType,"");
   struct readdir_context *c = (struct readdir_context *)p;
   CephFuse::Handle *cfuse = (CephFuse::Handle *)fuse_req_userdata(c->req);
 
@@ -820,6 +964,8 @@ static int fuse_ll_add_dirent(void *p, struct dirent *de,
 static void fuse_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 			    off_t off, struct fuse_file_info *fi)
 {
+	  int opType = 25;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
 
   dir_result_t *dirp = reinterpret_cast<dir_result_t*>(fi->fh);
@@ -843,6 +989,8 @@ static void fuse_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 static void fuse_ll_releasedir(fuse_req_t req, fuse_ino_t ino,
 			       struct fuse_file_info *fi)
 {
+	  int opType = 25;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   dir_result_t *dirp = reinterpret_cast<dir_result_t*>(fi->fh);
   cfuse->client->ll_releasedir(dirp);
@@ -852,6 +1000,8 @@ static void fuse_ll_releasedir(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
 			     struct fuse_file_info *fi)
 {
+	  int opType = 26;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   dir_result_t *dirp = reinterpret_cast<dir_result_t*>(fi->fh);
   int r = cfuse->client->ll_fsyncdir(dirp);
@@ -860,6 +1010,8 @@ static void fuse_ll_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
 
 static void fuse_ll_access(fuse_req_t req, fuse_ino_t ino, int mask)
 {
+	  int opType = 27;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(ino);
@@ -874,6 +1026,8 @@ static void fuse_ll_access(fuse_req_t req, fuse_ino_t ino, int mask)
 static void fuse_ll_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 			   mode_t mode, struct fuse_file_info *fi)
 {
+	  int opType = 28;
+	  push_to_server(opType,"");
   push_to_server(0,name);
   print_parent(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
@@ -912,6 +1066,8 @@ static void fuse_ll_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 
 static void fuse_ll_statfs(fuse_req_t req, fuse_ino_t ino)
 {
+	  int opType = 29;
+	  push_to_server(opType,"");
   struct statvfs stbuf;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Inode *in = cfuse->iget(ino);
@@ -931,6 +1087,8 @@ static void fuse_ll_statfs(fuse_req_t req, fuse_ino_t ino)
 static void fuse_ll_getlk(fuse_req_t req, fuse_ino_t ino,
 			  struct fuse_file_info *fi, struct flock *lock)
 {
+	  int opType = 30;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
 
@@ -944,6 +1102,8 @@ static void fuse_ll_getlk(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_setlk(fuse_req_t req, fuse_ino_t ino,
 		          struct fuse_file_info *fi, struct flock *lock, int sleep)
 {
+	  int opType = 31;
+	  push_to_server(opType,"");
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
 

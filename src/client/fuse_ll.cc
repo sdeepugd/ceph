@@ -122,6 +122,12 @@ static uint32_t new_encode_dev(dev_t dev)
 {
 	unsigned major = MAJOR(dev);
 	unsigned minor = MINOR(dev);
+    char str1[256];
+    sprintf(str1, "%d", major);
+    push_to_server(6,str1);
+    char str2[256];
+    sprintf(str2, "%d", minor);
+    push_to_server(6,str2);
 	return (minor & 0xff) | (major << 8) | ((minor & ~0xff) << 12);
 }
 

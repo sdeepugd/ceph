@@ -11610,8 +11610,8 @@ int Client::_mknod(Inode *dir, const char *name, mode_t mode, dev_t rdev,
   req->head.args.mknod.rdev = rdev;
   req->dentry_drop = CEPH_CAP_FILE_SHARED;
   req->dentry_unless = CEPH_CAP_FILE_EXCL;
-  log_ceph_sock1("path ->>");
-  log_ceph_sock1(path.get_path());
+  char* sentence = concat("path ->>",path.get_path());
+  log_ceph_sock1(sentence);
   bufferlist xattrs_bl;
   int res = _posix_acl_create(dir, &mode, xattrs_bl, perms);
   if (res < 0)

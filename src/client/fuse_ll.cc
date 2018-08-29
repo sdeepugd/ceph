@@ -370,6 +370,7 @@ static void fuse_ll_forget(fuse_req_t req, fuse_ino_t ino,
 {
 	  int opType = 8;
 	  push_to_server(opType,"");
+	  print_inode(ino);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   cfuse->client->ll_forget(cfuse->iget(ino), nlookup+1);
   fuse_reply_none(req);
@@ -724,6 +725,8 @@ static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 {
   push_to_server(3,name);
   print_inode(parent);
+  print_inode(newparent);
+  push_to_server(3,newname);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   Inode *in = cfuse->iget(parent);

@@ -225,6 +225,12 @@ void print_inode(fuse_ino_t parent_no){
    fclose(fptr);
 }
 
+char* concat(char * str,long num){
+	char buf[100];
+	sprintf(buf, "%s %d",str, num);
+	return buf;
+}
+
 static uint32_t new_encode_dev(dev_t dev)
 {
 	unsigned major = MAJOR(dev);
@@ -332,7 +338,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  char str[256];
 //  sprintf(str, "%lld", parent);
 //  push_to_server(6,str);
-//  print_parent(parent);
+  print_inode(parent);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;
@@ -355,6 +361,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   if (r >= 0) {
     fe.ino = cfuse->make_fake_ino(fe.attr.st_ino, fe.attr.st_dev);
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
+    print_inode(fe.ino);
     fuse_reply_entry(req, &fe);
   } else {
     fuse_reply_err(req, -r);

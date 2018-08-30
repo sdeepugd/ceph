@@ -231,11 +231,11 @@ char* concat(char * str,long num){
 	return buf;
 }
 
-char* concat(char * str1,char * str2){
-	char buf[100];
-	sprintf(buf, "%s %s",str1, str2);
-	return buf;
-}
+//char* concat(char * str1,char * str2){
+//	char buf[100];
+//	sprintf(buf, "%s %s",str1, str2);
+//	return buf;
+//}
 
 static uint32_t new_encode_dev(dev_t dev)
 {

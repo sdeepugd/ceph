@@ -231,6 +231,12 @@ char* concat(char * str,long num){
 	return buf;
 }
 
+char* concat(char * str1,char * str2){
+	char buf[100];
+	sprintf(buf, "%s %s",str1, str2);
+	return buf;
+}
+
 static uint32_t new_encode_dev(dev_t dev)
 {
 	unsigned major = MAJOR(dev);
@@ -339,6 +345,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  sprintf(str, "%lld", parent);
 //  push_to_server(6,str);
   print_inode(parent);
+
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;
@@ -997,8 +1004,10 @@ static void fuse_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 
   int r = cfuse->client->readdir_r_cb(dirp, fuse_ll_add_dirent, &rc);
   if (r == 0 || r == -ENOSPC)  /* ignore ENOSPC from our callback */
-    fuse_reply_buf(req, rc.buf, rc.pos);
-  else
+  {
+      push_to_server(opType,concat("buffer :",rc.buf));
+	  fuse_reply_buf(req, rc.buf, rc.pos);
+  }else
     fuse_reply_err(req, -r);
   delete[] rc.buf;
 }

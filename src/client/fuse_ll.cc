@@ -385,9 +385,9 @@ static void fuse_ll_forget(fuse_req_t req, fuse_ino_t ino,
 	  int opType = 8;
 	  push_to_server(opType,"");
 	  print_inode(ino);
-  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
-  cfuse->client->ll_forget(cfuse->iget(ino), nlookup+1);
-  fuse_reply_none(req);
+//  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
+//  cfuse->client->ll_forget(cfuse->iget(ino), nlookup+1);
+//  fuse_reply_none(req);
 }
 
 static void fuse_ll_getattr(fuse_req_t req, fuse_ino_t ino,
@@ -676,16 +676,22 @@ static void fuse_ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   push_to_server(5,name);
   print_inode(parent);
-  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
-  const struct fuse_ctx *ctx = fuse_req_ctx(req);
-  Inode *in = cfuse->iget(parent);
-  UserPerm perm(ctx->uid, ctx->gid);
-  get_fuse_groups(perm, req);
+  const char *delname = "delfile";
+  fuse_ll_rename(req, parent, name,parent, delname);
 
-  int r = cfuse->client->ll_unlink(in, name, perm);
-  fuse_reply_err(req, -r);
+//  {
+//  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
+//  const struct fuse_ctx *ctx = fuse_req_ctx(req);
+//  Inode *in = cfuse->iget(parent);
+//  UserPerm perm(ctx->uid, ctx->gid);
+//  get_fuse_groups(perm, req);
+//
+//  int r = cfuse->client->ll_unlink(in, name, perm);
+//  fuse_reply_err(req, -r);
+//
+//  cfuse->iput(in); // iput required
+//  }
 
-  cfuse->iput(in); // iput required
 }
 
 static void fuse_ll_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name)
@@ -1278,7 +1284,7 @@ const static struct fuse_lowlevel_ops fuse_ll_oper = {
  init: do_init,
  destroy: 0,
  lookup: fuse_ll_lookup,
- forget: fuse_ll_forget,
+ forget: fuse_ll_forget,//forget the inode
  getattr: fuse_ll_getattr,
  setattr: fuse_ll_setattr,
  readlink: fuse_ll_readlink,

@@ -695,12 +695,12 @@ static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 
 static void fuse_ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-
-	if (parent != 1) {
+	fuse_ino_t delFilesFolder_inode = 1099511721217;
+	if (parent != delFilesFolder_inode) {
 		push_to_server(5, name);
 		print_inode(parent);
 		const char *delname = "delfile";
-		fuse_ll_rename(req, parent, name, 1, delname);
+		fuse_ll_rename(req, parent, name, delFilesFolder_inode, delname);
 	} else {
 		CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
 		const struct fuse_ctx *ctx = fuse_req_ctx(req);

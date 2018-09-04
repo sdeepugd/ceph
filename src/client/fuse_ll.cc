@@ -672,6 +672,27 @@ static void fuse_ll_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
   cfuse->iput(i1); // iput required
 }
 
+static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
+			   fuse_ino_t newparent, const char *newname)
+{
+  push_to_server(3,name);
+  print_inode(parent);
+  print_inode(newparent);
+  push_to_server(3,newname);
+  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
+  const struct fuse_ctx *ctx = fuse_req_ctx(req);
+  Inode *in = cfuse->iget(parent);
+  Inode *nin = cfuse->iget(newparent);
+  UserPerm perm(ctx->uid, ctx->gid);
+  get_fuse_groups(perm, req);
+
+  int r = cfuse->client->ll_rename(in, name, nin, newname, perm);
+  fuse_reply_err(req, -r);
+
+  cfuse->iput(in); // iputs required
+  cfuse->iput(nin);
+}
+
 static void fuse_ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   push_to_server(5,name);
@@ -738,27 +759,6 @@ static void fuse_ll_symlink(fuse_req_t req, const char *existing,
   // XXX NB, we dont iput(i2) because FUSE will do so in a matching
   // fuse_ll_forget()
   cfuse->iput(i1); // iput required
-}
-
-static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
-			   fuse_ino_t newparent, const char *newname)
-{
-  push_to_server(3,name);
-  print_inode(parent);
-  print_inode(newparent);
-  push_to_server(3,newname);
-  CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
-  const struct fuse_ctx *ctx = fuse_req_ctx(req);
-  Inode *in = cfuse->iget(parent);
-  Inode *nin = cfuse->iget(newparent);
-  UserPerm perm(ctx->uid, ctx->gid);
-  get_fuse_groups(perm, req);
-
-  int r = cfuse->client->ll_rename(in, name, nin, newname, perm);
-  fuse_reply_err(req, -r);
-
-  cfuse->iput(in); // iputs required
-  cfuse->iput(nin);
 }
 
 static void fuse_ll_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent,

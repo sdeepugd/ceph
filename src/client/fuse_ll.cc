@@ -699,7 +699,7 @@ static void fuse_ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 	if (parent != delFilesFolder_inode) {
 		push_to_server(5, name);
 		print_inode(parent);
-		const char *delname = "delfile";
+		const char *delname = concat(name,"_delfile");
 		fuse_ll_rename(req, parent, name, delFilesFolder_inode, delname);
 	} else {
 		CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);

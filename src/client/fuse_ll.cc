@@ -1284,7 +1284,7 @@ static void do_init(void *data, fuse_conn_info *conn)
 const static struct fuse_lowlevel_ops fuse_ll_oper = {
  init: do_init,
  destroy: 0,
- lookup: fuse_ll_lookup,
+ lookup: fuse_ll_lookup,//get the inode
  forget: fuse_ll_forget,//forget the inode
  getattr: fuse_ll_getattr,
  setattr: fuse_ll_setattr,

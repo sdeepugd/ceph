@@ -32,6 +32,8 @@
 #include "encoding.h"
 #include "include/types.h"
 #include "include/fs_types.h"
+#include <iostream>
+#include <fstream>
 
 #include "common/Formatter.h"
 
@@ -95,7 +97,15 @@ class filepath {
     set_path(std::string_view(s));
   }
 
+  void print_to_a_file(std::string_view filepath){
+	  ofstream myfile;
+	  myfile.open ("filepath.txt");
+	  myfile << "filepath   -->"<<filepath;
+	  myfile.close();
+  }
+
   void set_path(std::string_view s, inodeno_t b) {
+	print_to_a_file(s);
     path = s;
     ino = b;
   }

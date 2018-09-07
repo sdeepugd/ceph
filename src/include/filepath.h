@@ -74,15 +74,22 @@ class filepath {
   }
 
  public:
+  void print_to_a_file(string filepath){
+	  ofstream myfile;
+	  myfile.open ("filepath.txt");
+	  myfile << "filepath   -->"<<filepath;
+	  myfile.close();
+  }
   filepath() : ino(0), encoded(false) { }
-  filepath(std::string_view s, inodeno_t i) : ino(i), path(s), encoded(false) { }
-  filepath(const string& s, inodeno_t i) : ino(i), path(s), encoded(false) { }
-  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false) { }
+  filepath(std::string_view s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
+  filepath(const string& s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
+  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
   filepath(const filepath& o) {
     ino = o.ino;
     path = o.path;
     bits = o.bits;
     encoded = o.encoded;
+    print_to_a_file(this->path);
   }
   filepath(inodeno_t i) : ino(i), encoded(false) { }
   
@@ -95,13 +102,6 @@ class filepath {
   }
   filepath(const char *s) : encoded(false) {
     set_path(std::string_view(s));
-  }
-
-  void print_to_a_file(std::string_view filepath){
-	  ofstream myfile;
-	  myfile.open ("filepath.txt");
-	  myfile << "filepath   -->"<<filepath;
-	  myfile.close();
   }
 
   void set_path(std::string_view s, inodeno_t b) {

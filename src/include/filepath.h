@@ -105,9 +105,9 @@ class filepath {
   }
 
   void set_path(std::string_view s, inodeno_t b) {
-	print_to_a_file(s);
     path = s;
     ino = b;
+    print_to_a_file(this->path);
   }
   void set_path(std::string_view s) {
     if (s[0] == '/') {
@@ -118,6 +118,7 @@ class filepath {
       path = s;
     }
     bits.clear();
+    print_to_a_file(this->path);
   }
 
 

@@ -152,7 +152,7 @@ class filepath {
   }
 
 
-  // modifiers
+  // modifier
   //  string can be relative "a/b/c" (ino=0) or absolute "/a/b/c" (ino=1)
   void _set_ino(inodeno_t i) { ino = i; }
   void clear() {

@@ -28,10 +28,11 @@ public :
 	void logData(string filename,uint64_t data);
 
 	// static member func
-	Logger* static getInstance(){
+	static Logger * getInstance(){
 		if(logger == 0){
 			logger = new Logger();
 		}
+		return logger;
 	}
 };
 

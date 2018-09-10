@@ -28,7 +28,7 @@ public :
 	void logData(string filename,uint64_t data);
 
 	// static member func
-	Logger static getInstance(){
+	*Logger static getInstance(){
 		if(logger == 0){
 			logger = new Logger();
 		}

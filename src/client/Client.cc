@@ -121,6 +121,7 @@
 #define O_DIRECT 0x0
 #endif
 
+#include "FuseActionLogger.h"
 #define DEBUG_GETATTR_CAPS (CEPH_CAP_XATTR_SHARED)
 
 void client_flush_set_callback(void *p, ObjectCacher::ObjectSet *oset)
@@ -10453,6 +10454,11 @@ void Client::_ll_get(Inode *in)
     if (in->snapid != CEPH_NOSNAP)
       ll_snap_ref[in->snapid]++;
   }
+
+
+  Logger *logger = Logger::getInstance();
+  logger->logData("Client_fuse",in->dir->parent_inode->ino.val);
+
   in->ll_get();
   ldout(cct, 20) << __func__ << " " << in << " " << in->ino << " -> " << in->ll_ref << dendl;
 }

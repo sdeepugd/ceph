@@ -75,7 +75,7 @@ class filepath {
   filepath() : ino(0), encoded(false) { }
   filepath(std::string_view s, inodeno_t i) : ino(i), path(s), encoded(false) { }
   filepath(const string& s, inodeno_t i) : ino(i), path(s), encoded(false) { }
-  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false)  }
+  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false) { }
   filepath(const filepath& o) {
     ino = o.ino;
     path = o.path;
@@ -152,7 +152,7 @@ class filepath {
   }
 
 
-  // modifier
+  // modifiers
   //  string can be relative "a/b/c" (ino=0) or absolute "/a/b/c" (ino=1)
   void _set_ino(inodeno_t i) { ino = i; }
   void clear() {

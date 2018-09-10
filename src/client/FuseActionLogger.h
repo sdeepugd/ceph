@@ -27,7 +27,6 @@ public :
 	void logData(string filename,string data);
 	void logData(string filename,uint64_t data);
 
-
 	// static member funcs
 	static Logger* getInstance();
 };

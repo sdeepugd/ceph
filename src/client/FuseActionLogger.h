@@ -21,7 +21,7 @@ private :
 	string data;
 	Logger();
 	~Logger();
-	static Logger *logger = 0;
+	static Logger *logger;
 public :
 	// member func
 	void logData(string filename,string data);
@@ -29,7 +29,7 @@ public :
 
 	// static member func
 	static Logger * getInstance(){
-		if(logger == 0){
+		if(!logger){
 			logger = new Logger();
 		}
 		return logger;

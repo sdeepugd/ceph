@@ -9,6 +9,7 @@
 #include "FuseActionLogger.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 
 void Logger::logData(string filename,string data){
 	  filename = "/home/local/ZOHOCORP/deepak-3386/"+filename + ".txt";
@@ -16,6 +17,14 @@ void Logger::logData(string filename,string data){
 	  myfile.open (filename);
 	  myfile <<data;
 	  myfile.close();
+}
+
+void Logger::logData(string filename,uint64_t data){
+	  string longval;
+	  stringstream strstream;
+	  strstream << data;
+	  strstream >> longval;
+	  logData(filename,longval);
 }
 
 Logger* Logger::logger = 0;

@@ -32,8 +32,6 @@
 #include "encoding.h"
 #include "include/types.h"
 #include "include/fs_types.h"
-#include <iostream>
-#include <fstream>
 
 #include "common/Formatter.h"
 
@@ -74,22 +72,15 @@ class filepath {
   }
 
  public:
-  void print_to_a_file(string filepath){
-	  ofstream myfile;
-	  myfile.open ("filepath.txt");
-	  myfile << "filepath   -->"<<filepath;
-	  myfile.close();
-  }
   filepath() : ino(0), encoded(false) { }
-  filepath(std::string_view s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
-  filepath(const string& s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
-  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false) { print_to_a_file(this->path); }
+  filepath(std::string_view s, inodeno_t i) : ino(i), path(s), encoded(false) { }
+  filepath(const string& s, inodeno_t i) : ino(i), path(s), encoded(false) { }
+  filepath(const char* s, inodeno_t i) : ino(i), path(s), encoded(false)  }
   filepath(const filepath& o) {
     ino = o.ino;
     path = o.path;
     bits = o.bits;
     encoded = o.encoded;
-    print_to_a_file(this->path);
   }
   filepath(inodeno_t i) : ino(i), encoded(false) { }
   
@@ -107,7 +98,6 @@ class filepath {
   void set_path(std::string_view s, inodeno_t b) {
     path = s;
     ino = b;
-    print_to_a_file(this->path);
   }
   void set_path(std::string_view s) {
     if (s[0] == '/') {
@@ -118,7 +108,6 @@ class filepath {
       path = s;
     }
     bits.clear();
-    print_to_a_file(this->path);
   }
 
 

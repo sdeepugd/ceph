@@ -6,25 +6,27 @@
  */
 
 
-#include <FuseActionLogger.h>
+#include "FuseActionLogger.h"
 #include <iostream>
 #include <fstream>
-#include <sstream>
-Logger* Logger::logger = NULL;
 
 void Logger::logData(string filename,string data){
-	  filename = filename + ".txt";
+	  filename = "/home/local/ZOHOCORP/deepak-3386/"+filename + ".txt";
 	  ofstream myfile;
 	  myfile.open (filename);
 	  myfile <<data;
 	  myfile.close();
 }
 
-void Logger::logData(string filename,uint64_t data){
-	  string longval;
-	  stringstream strstream;
-	  strstream << data;
-	  strstream >> longval;
-	  logData(filename,longval);
+Logger* Logger::logger = 0;
+
+Logger* Logger::getInstance(){
+	if(logger == 0){
+		logger = new Logger();
+	}
+	return logger;
 }
 
+Logger::Logger(){
+
+}

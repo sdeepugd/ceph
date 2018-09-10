@@ -25,15 +25,10 @@ private :
 public :
 	// member func
 	void logData(string filename,string data);
-	void logData(string filename,uint64_t data);
 
-	// static member func
-	static Logger * getInstance(){
-		if(!logger){
-			logger = new Logger;
-		}
-		return logger;
-	}
+
+	// static member funcs
+	static Logger* getInstance();
 };
 
 #endif /* SRC_CLIENT_FUSEACTIONLOGGER_H_ */

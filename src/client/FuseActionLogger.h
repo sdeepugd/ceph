@@ -30,7 +30,7 @@ public :
 	// static member func
 	static Logger * getInstance(){
 		if(!logger){
-			logger = new Logger();
+			logger = new Logger;
 		}
 		return logger;
 	}

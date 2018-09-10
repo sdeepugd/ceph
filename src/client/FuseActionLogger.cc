@@ -10,6 +10,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+Logger* Logger::logger = NULL;
 
 void Logger::logData(string filename,string data){
 	  filename = filename + ".txt";

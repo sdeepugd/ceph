@@ -25,6 +25,7 @@ private :
 public :
 	// member func
 	void logData(string filename,string data);
+	void Logger::logData(string filename,uint64_t data);
 
 
 	// static member funcs

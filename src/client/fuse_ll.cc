@@ -345,11 +345,17 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  sprintf(str, "%lld", parent);
 //  push_to_server(6,str);
   print_inode(parent);
+  string parentInodePrint = "";
 
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;
   Inode *i2, *i1 = cfuse->iget(parent); // see below
+
+  inodeno_t pino = i1->dir->parent_inode->ino;
+
+  string parentInodePrint = "parent inode of " + i1->ino + " : is " + pino;
+  push_to_server(opType,parentInodePrint.c_str());
 
   int r;
   UserPerm perms(ctx->uid, ctx->gid);

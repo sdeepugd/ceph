@@ -73,6 +73,7 @@
 #include "common/admin_socket.h"
 #include "common/errno.h"
 #include "include/str_list.h"
+#include "FuseActionLogger.h"
 
 #define dout_subsys ceph_subsys_client
 
@@ -121,7 +122,6 @@
 #define O_DIRECT 0x0
 #endif
 
-#include "FuseActionLogger.h"
 #define DEBUG_GETATTR_CAPS (CEPH_CAP_XATTR_SHARED)
 
 void client_flush_set_callback(void *p, ObjectCacher::ObjectSet *oset)

@@ -113,7 +113,7 @@ void common_init_finish(CephContext *cct)
       (cct->get_set_uid() || cct->get_set_gid())) {
 
 	  Logger* logger = Logger::getInstance();
-	  logger->logData("path",cct->get_admin_socket()->m_path);
+	  logger->logData("path",cct->get_admin_socket()->getPath() );
 
     cct->get_admin_socket()->chown(cct->get_set_uid(), cct->get_set_gid());
   }

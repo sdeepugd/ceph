@@ -95,6 +95,14 @@ public:
   void chown(uid_t uid, gid_t gid);
   void chmod(mode_t mode);
 
+	const std::string& getPath() const {
+		return m_path;
+	}
+
+	void setPath(const std::string& path) {
+		m_path = path;
+	}
+
 private:
 
   void shutdown();

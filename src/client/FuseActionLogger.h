@@ -13,6 +13,9 @@
 #include <string>
 
 using namespace std;
+int simpleFunc(){
+	return 0;
+}
 
 class Logger
 {

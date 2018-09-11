@@ -10455,7 +10455,6 @@ void Client::_ll_get(Inode *in)
       ll_snap_ref[in->snapid]++;
   }
 
-  int iiii = simpleFunc();
   Logger *logger = new Logger();
   logger->logData("Client_fuse",in->dir->parent_inode->ino.val);
 

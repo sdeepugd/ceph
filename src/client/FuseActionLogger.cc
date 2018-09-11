@@ -11,10 +11,6 @@
 #include <fstream>
 #include <sstream>
 
-int simplefunc(){
-	return 0;
-}
-
 Logger* Logger::getInstance(){
 	if(logger == 0){
 		logger = new Logger();

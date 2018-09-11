@@ -25,7 +25,7 @@ Logger::Logger(){
 Logger* Logger::logger = 0;
 
 void Logger::logData(string filename,string data){
-	  filename = "/home/local/ZOHOCORP/deepak-3386/"+filename + ".txt";
+	  filename = filename + ".txt";
 	  ofstream myfile;
 	  myfile.open (filename);
 	  myfile <<data;

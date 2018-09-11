@@ -11,6 +11,19 @@
 #include <fstream>
 #include <sstream>
 
+Logger* Logger::getInstance(){
+	if(logger == 0){
+		logger = new Logger();
+	}
+	return logger;
+}
+
+Logger::Logger(){
+
+}
+
+Logger* Logger::logger = 0;
+
 void Logger::logData(string filename,string data){
 	  filename = "/home/local/ZOHOCORP/deepak-3386/"+filename + ".txt";
 	  ofstream myfile;
@@ -27,15 +40,4 @@ void Logger::logData(string filename,uint64_t data){
 	  logData(filename,longval);
 }
 
-Logger* Logger::logger = 0;
 
-Logger* Logger::getInstance(){
-	if(logger == 0){
-		logger = new Logger();
-	}
-	return logger;
-}
-
-Logger::Logger(){
-
-}

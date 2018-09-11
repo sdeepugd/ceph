@@ -19,9 +19,9 @@ class Logger
 private :
 	string filename;
 	string data;
+	static Logger *logger;
 	Logger();
 	~Logger();
-	static Logger *logger;
 public :
 	// member func
 	void logData(string filename,string data);

@@ -8,6 +8,7 @@ set(libclient_srcs
   MetaSession.cc
   Trace.cc
   posix_acl.cc
+  FuseActionLogger.cc
   Delegation.cc)
 add_library(client STATIC ${libclient_srcs})
 target_link_libraries(client osdc)

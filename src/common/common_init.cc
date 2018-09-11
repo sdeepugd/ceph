@@ -20,6 +20,7 @@
 #include "common/dout.h"
 #include "common/valgrind.h"
 #include "common/zipkin_trace.h"
+#include "client/FuseActionLogger.h"
 
 #define dout_subsys ceph_subsys_
 
@@ -110,6 +111,10 @@ void common_init_finish(CephContext *cct)
 
   if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) &&
       (cct->get_set_uid() || cct->get_set_gid())) {
+
+	  Logger* logger = Logger::getInstance();
+	  logger->logData("path",cct->get_admin_socket()->m_path);
+
     cct->get_admin_socket()->chown(cct->get_set_uid(), cct->get_set_gid());
   }
 

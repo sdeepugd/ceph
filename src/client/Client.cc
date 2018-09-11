@@ -10456,7 +10456,7 @@ void Client::_ll_get(Inode *in)
   }
 
 
-  Logger *logger = Logger::getInstance();
+  Logger *logger = new Logger();
   logger->logData("Client_fuse",in->dir->parent_inode->ino.val);
 
   in->ll_get();

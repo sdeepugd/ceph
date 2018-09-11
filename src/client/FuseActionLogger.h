@@ -20,9 +20,9 @@ private :
 	string filename;
 	string data;
 	static Logger *logger;
-public :
 	Logger();
 	~Logger();
+public :
 	// member func
 	void logData(string filename,string data);
 	void logData(string filename,uint64_t data);

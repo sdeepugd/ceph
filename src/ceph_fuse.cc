@@ -22,6 +22,7 @@
 
 #include "client/Client.h"
 #include "client/fuse_ll.h"
+#include "client/FuseActionLogger.h"
 
 #include "msg/Messenger.h"
 
@@ -223,8 +224,12 @@ int main(int argc, const char **argv, const char *envp[]) {
     int tester_r = 0;
     void *tester_rp = nullptr;
 
+    Logger logger = Logger::getInstance("monclient");
+    ofstream lfile = logger.getLoggerFile();
     MonClient *mc = new MonClient(g_ceph_context);
     int r = mc->build_initial_monmap();
+
+    mc->monmap.print_summary(lfile);
     if (r == -EINVAL) {
       cerr << "failed to generate initial mon list" << std::endl;
       exit(1);

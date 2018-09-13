@@ -22,11 +22,11 @@ private :
 	static Logger *logger;
 	int inaction = 0;
 	Logger();
-	~Logger();
 	Logger(string filename){
 		this->filename = filename;
 	}
 public :
+	~Logger();
 	// member func
 	void logData(string filename,string data);
 	void logData(string filename,uint64_t data);

@@ -228,8 +228,8 @@ int main(int argc, const char **argv, const char *envp[]) {
     ofstream lfile = logger->getLoggerFile();
     MonClient *mc = new MonClient(g_ceph_context);
     int r = mc->build_initial_monmap();
-    lfile<<"hello";
-    mc->monmap.print_summary(lfile);
+    lfile<<"hello"
+    mc->monmap.print(lfile);
     if (r == -EINVAL) {
       cerr << "failed to generate initial mon list" << std::endl;
       exit(1);

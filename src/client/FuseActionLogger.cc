@@ -19,10 +19,10 @@ Logger* Logger::getInstance() {
 
 Logger* Logger::getInstance(string filename) {
 	if (logger == 0) {
-		logger = new Logger(filename);
 	} else {
-		this->filename=filename;
+		delete logger;
 	}
+	logger = new Logger(filename);
 	return logger;
 }
 

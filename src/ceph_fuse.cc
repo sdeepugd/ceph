@@ -281,6 +281,7 @@ int main(int argc, const char **argv, const char *envp[]) {
       auto mountpoint = client_mountpoint.c_str();
       auto fuse_require_active_mds = g_conf->get_val<bool>(
         "fuse_require_active_mds");
+      cerr<<fuse_require_active_mds;
       r = client->mount(mountpoint, perms, fuse_require_active_mds);
       if (r < 0) {
         if (r == CEPH_FUSE_NO_MDS_UP) {

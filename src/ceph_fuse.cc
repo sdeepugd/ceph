@@ -257,6 +257,7 @@ int main(int argc, const char **argv, const char *envp[]) {
     }
 
     cerr << "ceph-fuse[" << getpid() << "]: starting ceph client" << std::endl;
+    cerr << "hello from cerr"<<std::endl;
     r = messenger->start();
     if (r < 0) {
       cerr << "ceph-fuse[" << getpid() << "]: ceph messenger failed with " << cpp_strerror(-r) << std::endl;

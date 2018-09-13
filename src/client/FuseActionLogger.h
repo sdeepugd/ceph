@@ -25,8 +25,8 @@ private :
 	Logger(string filename){
 		this->filename = filename;
 	}
-public :
 	~Logger();
+public :
 	// member func
 	void logData(string filename,string data);
 	void logData(string filename,uint64_t data);

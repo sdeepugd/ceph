@@ -1246,7 +1246,6 @@ void Server::respond_to_request(MDRequestRef& mdr, int r)
 // statistics mds req op number and latency 
 void Server::perf_gather_op_latency(const MClientRequest* req, utime_t lat)
 {
-  dout(1) << " inside perf gather" << dendl;
   int code = l_mdss_first;
   switch(req->get_op()) {
   case CEPH_MDS_OP_LOOKUPHASH:
@@ -1810,6 +1809,8 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
     }
   }
   
+  dout(1) << " req is "<<req->get_op() << dendl;
+
   if (is_full) {
     if (req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
         req->get_op() == CEPH_MDS_OP_SETDIRLAYOUT ||

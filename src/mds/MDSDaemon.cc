@@ -130,7 +130,7 @@ public:
 bool MDSDaemon::asok_command(std::string_view command, const cmdmap_t& cmdmap,
 			     std::string_view format, std::ostream& ss)
 {
-  std::cerr << "asok_command: " << command << " (starting...)" << dendl;
+  dout(1) << "asok_command: " << command << " (starting...)" << dendl;
 
   Formatter *f = Formatter::create(format, "json-pretty", "json-pretty");
   bool handled = false;
@@ -426,25 +426,25 @@ void MDSDaemon::handle_conf_change(const md_config_t *conf,
 
 int MDSDaemon::init()
 {
-  dout(10) << sizeof(MDSCacheObject) << "\tMDSCacheObject" << dendl;
-  dout(10) << sizeof(CInode) << "\tCInode" << dendl;
-  dout(10) << sizeof(elist<void*>::item) << "\t elist<>::item   *7=" << 7*sizeof(elist<void*>::item) << dendl;
-  dout(10) << sizeof(CInode::mempool_inode) << "\t inode  " << dendl;
-  dout(10) << sizeof(CInode::mempool_old_inode) << "\t old_inode " << dendl;
-  dout(10) << sizeof(nest_info_t) << "\t  nest_info_t " << dendl;
-  dout(10) << sizeof(frag_info_t) << "\t  frag_info_t " << dendl;
-  dout(10) << sizeof(SimpleLock) << "\t SimpleLock   *5=" << 5*sizeof(SimpleLock) << dendl;
-  dout(10) << sizeof(ScatterLock) << "\t ScatterLock  *3=" << 3*sizeof(ScatterLock) << dendl;
-  dout(10) << sizeof(CDentry) << "\tCDentry" << dendl;
-  dout(10) << sizeof(elist<void*>::item) << "\t elist<>::item" << dendl;
-  dout(10) << sizeof(SimpleLock) << "\t SimpleLock" << dendl;
-  dout(10) << sizeof(CDir) << "\tCDir " << dendl;
-  dout(10) << sizeof(elist<void*>::item) << "\t elist<>::item   *2=" << 2*sizeof(elist<void*>::item) << dendl;
-  dout(10) << sizeof(fnode_t) << "\t fnode_t " << dendl;
-  dout(10) << sizeof(nest_info_t) << "\t  nest_info_t *2" << dendl;
-  dout(10) << sizeof(frag_info_t) << "\t  frag_info_t *2" << dendl;
-  dout(10) << sizeof(Capability) << "\tCapability " << dendl;
-  dout(10) << sizeof(xlist<void*>::item) << "\t xlist<>::item   *2=" << 2*sizeof(xlist<void*>::item) << dendl;
+  dout(1) << sizeof(MDSCacheObject) << "\tMDSCacheObject" << dendl;
+  dout(1) << sizeof(CInode) << "\tCInode" << dendl;
+  dout(1) << sizeof(elist<void*>::item) << "\t elist<>::item   *7=" << 7*sizeof(elist<void*>::item) << dendl;
+  dout(1) << sizeof(CInode::mempool_inode) << "\t inode  " << dendl;
+  dout(1) << sizeof(CInode::mempool_old_inode) << "\t old_inode " << dendl;
+  dout(1) << sizeof(nest_info_t) << "\t  nest_info_t " << dendl;
+  dout(1) << sizeof(frag_info_t) << "\t  frag_info_t " << dendl;
+  dout(1) << sizeof(SimpleLock) << "\t SimpleLock   *5=" << 5*sizeof(SimpleLock) << dendl;
+  dout(1) << sizeof(ScatterLock) << "\t ScatterLock  *3=" << 3*sizeof(ScatterLock) << dendl;
+  dout(1) << sizeof(CDentry) << "\tCDentry" << dendl;
+  dout(1) << sizeof(elist<void*>::item) << "\t elist<>::item" << dendl;
+  dout(1) << sizeof(SimpleLock) << "\t SimpleLock" << dendl;
+  dout(1) << sizeof(CDir) << "\tCDir " << dendl;
+  dout(1) << sizeof(elist<void*>::item) << "\t elist<>::item   *2=" << 2*sizeof(elist<void*>::item) << dendl;
+  dout(1) << sizeof(fnode_t) << "\t fnode_t " << dendl;
+  dout(1) << sizeof(nest_info_t) << "\t  nest_info_t *2" << dendl;
+  dout(1) << sizeof(frag_info_t) << "\t  frag_info_t *2" << dendl;
+  dout(1) << sizeof(Capability) << "\tCapability " << dendl;
+  dout(1) << sizeof(xlist<void*>::item) << "\t xlist<>::item   *2=" << 2*sizeof(xlist<void*>::item) << dendl;
 
   messenger->add_dispatcher_tail(&beacon);
   messenger->add_dispatcher_tail(this);

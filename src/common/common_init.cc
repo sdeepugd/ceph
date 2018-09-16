@@ -20,7 +20,6 @@
 #include "common/dout.h"
 #include "common/valgrind.h"
 #include "common/zipkin_trace.h"
-#include "client/FuseActionLogger.h"
 
 #define dout_subsys ceph_subsys_
 

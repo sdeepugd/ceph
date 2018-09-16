@@ -130,7 +130,7 @@ public:
 bool MDSDaemon::asok_command(std::string_view command, const cmdmap_t& cmdmap,
 			     std::string_view format, std::ostream& ss)
 {
-  dout(1) << "asok_command: " << command << " (starting...)" << dendl;
+  std::cerr << "asok_command: " << command << " (starting...)" << dendl;
 
   Formatter *f = Formatter::create(format, "json-pretty", "json-pretty");
   bool handled = false;

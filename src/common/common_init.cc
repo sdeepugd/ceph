@@ -108,8 +108,6 @@ void common_init_finish(CephContext *cct)
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS))
     cct->start_service_thread();
 
-  Logger* logger = Logger::getInstance();
-  logger->logData("path",cct->get_admin_socket()->getPath() );
   if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) &&
       (cct->get_set_uid() || cct->get_set_gid())) {
 

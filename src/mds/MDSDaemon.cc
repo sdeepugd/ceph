@@ -559,6 +559,7 @@ void MDSDaemon::send_command_reply(MCommand *m, MDSRank *mds_rank,
 				   int r, bufferlist outbl,
 				   std::string_view outs)
 {
+  m->print(std::cerr);
   auto priv = m->get_connection()->get_priv();
   auto session = static_cast<Session *>(priv.get());
   assert(session != NULL);

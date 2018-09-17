@@ -3138,7 +3138,7 @@ struct C_MDS_LookupIno2 : public ServerContext {
 void Server::handle_client_lookup_ino(MDRequestRef& mdr,
 				      bool want_parent, bool want_dentry)
 {
-  dout(1) << "lookup_parent called" << mdr << dendl;
+  dout(1) << "lookup_parent called" << dendl;
   MClientRequest *req = mdr->client_request;
 
   if ((uint64_t)req->head.args.lookupino.snapid > 0)
@@ -3233,7 +3233,7 @@ void Server::handle_client_lookup_ino(MDRequestRef& mdr,
 
 void Server::_lookup_snap_ino(MDRequestRef& mdr)
 {
-	dout(1) << "lookup_parent called" << mdr << dendl;
+	dout(1) << "lookup_parent called"<< dendl;
   MClientRequest *req = mdr->client_request;
 
   vinodeno_t vino;
@@ -3309,7 +3309,7 @@ void Server::_lookup_snap_ino(MDRequestRef& mdr)
 
 void Server::_lookup_ino_2(MDRequestRef& mdr, int r)
 {
-	dout(1) << "lookup_parent called" << mdr << dendl;
+  dout(1) << "lookup_parent called"<< dendl;
   inodeno_t ino = mdr->client_request->get_filepath().get_ino();
   dout(10) << "_lookup_ino_2 " << mdr.get() << " ino " << ino << " r=" << r << dendl;
 
@@ -3333,7 +3333,7 @@ void Server::_lookup_ino_2(MDRequestRef& mdr, int r)
 /* This function takes responsibility for the passed mdr*/
 void Server::handle_client_open(MDRequestRef& mdr)
 {
-	dout(1) << "lookup_parent called" << mdr << dendl;
+	dout(1) << "lookup_parent called"<< dendl;
   MClientRequest *req = mdr->client_request;
   dout(7) << "open on " << req->get_filepath() << dendl;
 

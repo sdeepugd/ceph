@@ -6063,6 +6063,7 @@ int Client::_do_lookup(Inode *dir, const string& name, int mask,
 int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 		    const UserPerm& perms)
 {
+  ldout(cct, 1) << " in lookup >>>>>>>>>>>>> " << dendl;
   int r = 0;
   Dentry *dn = NULL;
 
@@ -10281,6 +10282,7 @@ Inode *Client::open_snapdir(Inode *diri)
 int Client::ll_lookup(Inode *parent, const char *name, struct stat *attr,
 		      Inode **out, const UserPerm& perms)
 {
+  cerr <<"hello";
   Mutex::Locker lock(client_lock);
   vinodeno_t vparent = _get_vino(parent);
   ldout(cct, 3) << __func__ << " " << vparent << " " << name << dendl;

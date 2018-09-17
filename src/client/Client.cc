@@ -6118,6 +6118,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	     << dendl;
     cerr<<"dentry name"<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
+    	cerr<<"cap issue masked";
       // is dn lease valid?
       utime_t now = ceph_clock_now();
       if (dn->lease_mds >= 0 &&
@@ -6128,7 +6129,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	    s.cap_gen == dn->lease_gen) {
 	  // touch this mds's dir cap too, even though we don't _explicitly_ use it here, to
 	  // make trim_caps() behave.
-		cerr<<"dir touch cap ....";
+		cerr<<"dir touch cap ...."<<std::endl;
 	  dir->try_touch_cap(dn->lease_mds);
 	  goto hit_dn;
 	}
@@ -6137,16 +6138,19 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       }
       // dir lease?
       if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
+    	  cerr<<"capp issue masked"<<std::endl;
 	if (dn->cap_shared_gen == dir->shared_gen &&
 	    (!dn->inode || dn->inode->caps_issued_mask(mask, true)))
 	      goto hit_dn;
 	if (!dn->inode && (dir->flags & I_COMPLETE)) {
+		cerr<<"icomplete"<<std::endl;
 	  ldout(cct, 10) << __func__ << " concluded ENOENT locally for "
 			 << *dir << " dn '" << dname << "'" << dendl;
 	  return -ENOENT;
 	}
       }
     } else {
+    	cerr<<"no cap"<<std::endl;
       ldout(cct, 20) << " no cap on " << dn->inode->vino() << dendl;
     }
   } else {

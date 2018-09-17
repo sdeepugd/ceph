@@ -6139,7 +6139,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       // dir lease?
       if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
     	  cerr<<"capp issue masked"<<std::endl;
-    	  cerr<<"inode :"<<dn->inode->vino()<<std::endl;
+    	  cerr<<"inode :"<<dn->inode->vino()->ino<<std::endl;
 	if (dn->cap_shared_gen == dir->shared_gen &&
 	    (!dn->inode || dn->inode->caps_issued_mask(mask, true)))
 	      goto hit_dn;

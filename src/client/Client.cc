@@ -1627,7 +1627,7 @@ int Client::make_request(MetaRequest *request,
 			 bufferlist *pdirbl)
 {
   int r = 0;
-
+  cerr<<"make request";
   // assign a unique tid
   ceph_tid_t tid = ++last_tid;
   request->set_tid(tid);
@@ -6042,6 +6042,7 @@ void Client::renew_caps(MetaSession *session)
 int Client::_do_lookup(Inode *dir, const string& name, int mask,
 		       InodeRef *target, const UserPerm& perms)
 {
+	cerr<<"In _do_lookup";
   int op = dir->snapid == CEPH_SNAPDIR ? CEPH_MDS_OP_LOOKUPSNAP : CEPH_MDS_OP_LOOKUP;
   MetaRequest *req = new MetaRequest(op);
   filepath path;
@@ -6166,7 +6167,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       return -ENOENT;
     }
   }
-
+  cerr<<"outside if ..";
   r = _do_lookup(dir, dname, mask, target, perms);
   goto done;
 

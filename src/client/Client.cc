@@ -1627,7 +1627,7 @@ int Client::make_request(MetaRequest *request,
 			 bufferlist *pdirbl)
 {
   int r = 0;
-  cerr<<"make request";
+
   // assign a unique tid
   ceph_tid_t tid = ++last_tid;
   request->set_tid(tid);
@@ -6042,7 +6042,6 @@ void Client::renew_caps(MetaSession *session)
 int Client::_do_lookup(Inode *dir, const string& name, int mask,
 		       InodeRef *target, const UserPerm& perms)
 {
-	cerr<<"In _do_lookup";
   int op = dir->snapid == CEPH_SNAPDIR ? CEPH_MDS_OP_LOOKUPSNAP : CEPH_MDS_OP_LOOKUP;
   MetaRequest *req = new MetaRequest(op);
   filepath path;
@@ -6075,6 +6074,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 
       InodeRef tmptarget;
       int r = make_request(req, perms, &tmptarget, NULL, rand() % mdsmap->get_num_in_mds());
+
       if (r == 0) {
 	Inode *tempino = tmptarget.get();
 	_ll_get(tempino);
@@ -6113,11 +6113,12 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   if (dir->dir &&
       dir->dir->dentries.count(dname)) {
     dn = dir->dir->dentries[dname];
+
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;
+
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
-    	cerr<<"cap issue masked"<<std::endl;
       // is dn lease valid?
       utime_t now = ceph_clock_now();
       if (dn->lease_mds >= 0 &&
@@ -6128,7 +6129,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	    s.cap_gen == dn->lease_gen) {
 	  // touch this mds's dir cap too, even though we don't _explicitly_ use it here, to
 	  // make trim_caps() behave.
-		cerr<<"dir touch cap ...."<<std::endl;
 	  dir->try_touch_cap(dn->lease_mds);
 	  goto hit_dn;
 	}
@@ -6137,26 +6137,19 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       }
       // dir lease?
       if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
-    	  cerr<<"capp issue masked"<<std::endl;
 	if (dn->cap_shared_gen == dir->shared_gen &&
 	    (!dn->inode || dn->inode->caps_issued_mask(mask, true)))
-	{
-		cerr<<"caps issued"<<std::endl;
-		goto hit_dn;
-	}
+	      goto hit_dn;
 	if (!dn->inode && (dir->flags & I_COMPLETE)) {
-		cerr<<"icomplete"<<std::endl;
 	  ldout(cct, 10) << __func__ << " concluded ENOENT locally for "
 			 << *dir << " dn '" << dname << "'" << dendl;
 	  return -ENOENT;
 	}
       }
     } else {
-    	cerr<<"no cap"<<std::endl;
       ldout(cct, 20) << " no cap on " << dn->inode->vino() << dendl;
     }
   } else {
-	cerr<<"in else part of dir->dir\n";
     // can we conclude ENOENT locally?
     if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true) &&
 	(dir->flags & I_COMPLETE)) {
@@ -6164,7 +6157,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       return -ENOENT;
     }
   }
-  cerr<<"outside ifffff";
+
   r = _do_lookup(dir, dname, mask, target, perms);
   goto done;
 

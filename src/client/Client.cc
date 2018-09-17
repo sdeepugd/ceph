@@ -6118,7 +6118,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	     << dendl;
     cerr<<"dentry name"<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
-    	cerr<<"cap issue masked";
+    	cerr<<"cap issue masked"<<std::endl;
       // is dn lease valid?
       utime_t now = ceph_clock_now();
       if (dn->lease_mds >= 0 &&
@@ -6139,9 +6139,11 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       // dir lease?
       if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
     	  cerr<<"capp issue masked"<<std::endl;
+    	  cerr<<"inode :"<<dn->inode->vino()<<std::endl;
 	if (dn->cap_shared_gen == dir->shared_gen &&
 	    (!dn->inode || dn->inode->caps_issued_mask(mask, true)))
 	      goto hit_dn;
+
 	if (!dn->inode && (dir->flags & I_COMPLETE)) {
 		cerr<<"icomplete"<<std::endl;
 	  ldout(cct, 10) << __func__ << " concluded ENOENT locally for "

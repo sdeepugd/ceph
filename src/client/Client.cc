@@ -6063,7 +6063,7 @@ int Client::_do_lookup(Inode *dir, const string& name, int mask,
 int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 		    const UserPerm& perms)
 {
-  ldout(cct, 1) << " in lookup >>>>>>>>>>>>> " << dendl;
+  cerr<<"in lookup .........";
   int r = 0;
   Dentry *dn = NULL;
 
@@ -10457,7 +10457,6 @@ void Client::_ll_get(Inode *in)
       ll_snap_ref[in->snapid]++;
   }
 
-  cout <<"here ...........";
   Logger *logger = Logger::getInstance();
 
   in->ll_get();

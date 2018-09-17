@@ -13691,9 +13691,9 @@ bool Client::is_quota_bytes_exceeded(Inode *in, int64_t new_bytes,
 				     const UserPerm& perms)
 {
 	cerr<<"inside quota >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"<<std::endl;
-    cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
   if(in->quota.max_bytes)	{
 	  cerr<<"quota max bytes: "<<in->quota.max_bytes<<std::endl;
+	  cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
   } else {
 	  cerr << "else in quota "<<std::endl;
   }

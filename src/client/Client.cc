@@ -6123,9 +6123,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   if (dir->dir &&
       dir->dir->dentries.count(dname)) {
     dn = dir->dir->dentries[dname];
-    cerr<<"dentries count"<< " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
-   	     << " seq " << dn->lease_seq
-   	     << dendl;
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;

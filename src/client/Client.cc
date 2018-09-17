@@ -6116,6 +6116,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;
+    cerr<<"dentry name"<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
       // is dn lease valid?
       utime_t now = ceph_clock_now();
@@ -6148,6 +6149,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       ldout(cct, 20) << " no cap on " << dn->inode->vino() << dendl;
     }
   } else {
+	cerr<<"in else part of dir->dir\n";
     // can we conclude ENOENT locally?
     if (dir->caps_issued_mask(CEPH_CAP_FILE_SHARED, true) &&
 	(dir->flags & I_COMPLETE)) {

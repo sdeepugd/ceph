@@ -6077,7 +6077,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   if (dname == "..") {
 	  cerr<<"in dname == ..";
     if (dir->dentries.empty()) {
-    	cerr<<"in dname is empty;
+    	cerr<<"in dname is empty";
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);
       filepath path(dir->ino);
       req->set_filepath(path);

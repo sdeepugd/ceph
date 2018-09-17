@@ -6067,8 +6067,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   int r = 0;
   Dentry *dn = NULL;
 
-  xlist<Dentry*>::iterator iter = dir->dentries.begin();
-  cerr<<dir->dentries;
   if (dname == "..") {
     if (dir->dentries.empty()) {
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);
@@ -6077,7 +6075,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 
       InodeRef tmptarget;
       int r = make_request(req, perms, &tmptarget, NULL, rand() % mdsmap->get_num_in_mds());
-      cerr<<"after request made";
       if (r == 0) {
 	Inode *tempino = tmptarget.get();
 	_ll_get(tempino);
@@ -6119,7 +6116,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;
-    cerr<<"detry name "<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
       // is dn lease valid?
       utime_t now = ceph_clock_now();
@@ -6159,7 +6155,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       return -ENOENT;
     }
   }
-  cerr<<"outside if ..";
   r = _do_lookup(dir, dname, mask, target, perms);
   goto done;
 

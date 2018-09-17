@@ -6064,21 +6064,13 @@ int Client::_do_lookup(Inode *dir, const string& name, int mask,
 int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 		    const UserPerm& perms)
 {
-  cerr<<"\ndname .."<<dname;
   int r = 0;
   Dentry *dn = NULL;
 
   xlist<Dentry*>::iterator iter = dir->dentries.begin();
-  while( iter != dir->dentries.end())
-  		{
-	  		cerr<<"dentry obj"<<*iter;
-	  		++iter;
-  		}
-  cerr<<"\n";
+  cerr<<dir->dentries;
   if (dname == "..") {
-	  cerr<<"in dname == ..";
     if (dir->dentries.empty()) {
-    	cerr<<"in dname is empty ";
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);
       filepath path(dir->ino);
       req->set_filepath(path);

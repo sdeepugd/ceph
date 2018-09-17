@@ -6075,18 +6075,21 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   		}
   cerr<<"\n";
   if (dname == "..") {
+	  cerr<<"in dname == ..";
     if (dir->dentries.empty()) {
+    	cerr<<"in dname is empty;
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);
       filepath path(dir->ino);
       req->set_filepath(path);
 
       InodeRef tmptarget;
       int r = make_request(req, perms, &tmptarget, NULL, rand() % mdsmap->get_num_in_mds());
-
+      cerr<<"after request made";
       if (r == 0) {
 	Inode *tempino = tmptarget.get();
 	_ll_get(tempino);
 	*target = tempino;
+	cerr<< __func__ << " found target " << (*target)->ino << dendl;
 	ldout(cct, 8) << __func__ << " found target " << (*target)->ino << dendl;
       } else {
 	*target = dir;
@@ -6120,6 +6123,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 
   if (dir->dir &&
       dir->dir->dentries.count(dname)) {
+	  cerr<< "in dentry count" << dendl;
     dn = dir->dir->dentries[dname];
 
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl

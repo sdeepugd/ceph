@@ -13700,6 +13700,8 @@ bool Client::is_quota_bytes_exceeded(Inode *in, int64_t new_bytes,
   if(in->quota.max_bytes)	{
 	  cerr<<"quota max bytes: "<<in->quota.max_bytes<<std::endl;
 	  cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
+  } else {
+	  cerr << "else in quota ";
   }
   return check_quota_condition(in, perms,
       [&new_bytes](const Inode &in) {

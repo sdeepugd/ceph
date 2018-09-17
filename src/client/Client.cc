@@ -6128,6 +6128,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	    s.cap_gen == dn->lease_gen) {
 	  // touch this mds's dir cap too, even though we don't _explicitly_ use it here, to
 	  // make trim_caps() behave.
+		cerr<<"dir touch cap ....";
 	  dir->try_touch_cap(dn->lease_mds);
 	  goto hit_dn;
 	}

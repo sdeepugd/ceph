@@ -6116,7 +6116,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;
-    cerr<<"\ndentry name"<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
     	cerr<<"cap issue masked"<<std::endl;
       // is dn lease valid?
@@ -13698,8 +13697,10 @@ bool Client::is_quota_files_exceeded(Inode *in, const UserPerm& perms)
 bool Client::is_quota_bytes_exceeded(Inode *in, int64_t new_bytes,
 				     const UserPerm& perms)
 {
-  cerr<<"quota max bytes: "<<in->quota.max_bytes<<std::endl;
-  cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
+  if(in->quota.max_bytes)	{
+	  cerr<<"quota max bytes: "<<in->quota.max_bytes<<std::endl;
+	  cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
+  }
   return check_quota_condition(in, perms,
       [&new_bytes](const Inode &in) {
         return in.quota.max_bytes && (in.rstat.rbytes + new_bytes)

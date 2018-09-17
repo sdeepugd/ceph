@@ -6089,7 +6089,6 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 	Inode *tempino = tmptarget.get();
 	_ll_get(tempino);
 	*target = tempino;
-	cerr<< __func__ << " found target " << (*target)->ino << dendl;
 	ldout(cct, 8) << __func__ << " found target " << (*target)->ino << dendl;
       } else {
 	*target = dir;
@@ -6123,9 +6122,10 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 
   if (dir->dir &&
       dir->dir->dentries.count(dname)) {
-	  cerr<< "in dentry count" << dendl;
     dn = dir->dir->dentries[dname];
-
+    cerr<<"dentries count"<< " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
+   	     << " seq " << dn->lease_seq
+   	     << dendl;
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;

@@ -6070,8 +6070,10 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
   xlist<Dentry*>::iterator iter = dir->dentries.begin();
   while( iter != dir->dentries.end())
   		{
-	  		cerr<<"dentry obj"<<dir->dentries[iter];
+	  		cerr<<"dentry obj"<<*iter;
+	  		++iter;
   		}
+  cerr<<"\n";
   if (dname == "..") {
     if (dir->dentries.empty()) {
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);

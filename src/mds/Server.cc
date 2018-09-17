@@ -1809,8 +1809,6 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
     }
   }
   
-  dout(1) << " req is "<<req->get_op() << dendl;
-
   if (is_full) {
     if (req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
         req->get_op() == CEPH_MDS_OP_SETDIRLAYOUT ||
@@ -3140,6 +3138,7 @@ struct C_MDS_LookupIno2 : public ServerContext {
 void Server::handle_client_lookup_ino(MDRequestRef& mdr,
 				      bool want_parent, bool want_dentry)
 {
+  dout(1) << "lookup_parent called" << mdr << dendl;
   MClientRequest *req = mdr->client_request;
 
   if ((uint64_t)req->head.args.lookupino.snapid > 0)
@@ -3211,7 +3210,7 @@ void Server::handle_client_lookup_ino(MDRequestRef& mdr,
       respond_to_request(mdr, -ESTALE);
       return;
     }
-    dout(10) << "reply to lookup_parent " << *in << dendl;
+    dout(1) << "reply to lookup_parent " << *in << dendl;
     mdr->tracei = diri;
     respond_to_request(mdr, 0);
   } else {

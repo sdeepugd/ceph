@@ -10581,11 +10581,6 @@ Inode *Client::ll_get_inode(vinodeno_t vino)
 
   if (unmounting)
     return NULL;
-  for (ceph::unordered_map<vinodeno_t, Inode*>::iterator it = inode_map.begin();
-       it != inode_map.end();
-       ++it) {
-	  cerr<<"inode :"<<it->second->ino.val<<std::endl;
-  }
   cerr<<"vino : "<<vino.ino.val<<std::endl;
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
   if (p == inode_map.end()){

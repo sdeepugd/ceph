@@ -6063,10 +6063,15 @@ int Client::_do_lookup(Inode *dir, const string& name, int mask,
 int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
 		    const UserPerm& perms)
 {
-  cerr<<"in lookup .........";
+  cerr<<"\ndname .."<<dname;
   int r = 0;
   Dentry *dn = NULL;
 
+  xlist<Dentry*>::iterator iter = dir->dentries.begin();
+  while( iter != dir->dentries.end())
+  		{
+	  		cerr<<"dentry obj"<<dir->dentries[iter];
+  		}
   if (dname == "..") {
     if (dir->dentries.empty()) {
       MetaRequest *req = new MetaRequest(CEPH_MDS_OP_LOOKUPPARENT);

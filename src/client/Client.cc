@@ -6116,7 +6116,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
     ldout(cct, 20) << __func__ << " have dn " << dname << " mds." << dn->lease_mds << " ttl " << dn->lease_ttl
 	     << " seq " << dn->lease_seq
 	     << dendl;
-    cerr<<"dentry name"<<dn->name<<"\n";
+    cerr<<"\ndentry name"<<dn->name<<"\n";
     if (!dn->inode || dn->inode->caps_issued_mask(mask, true)) {
     	cerr<<"cap issue masked"<<std::endl;
       // is dn lease valid?

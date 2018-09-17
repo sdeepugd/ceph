@@ -6142,8 +6142,10 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
     	  cerr<<"inode :"<<dn->inode->vino().ino<<std::endl;
 	if (dn->cap_shared_gen == dir->shared_gen &&
 	    (!dn->inode || dn->inode->caps_issued_mask(mask, true)))
-	      goto hit_dn;
-
+	{
+		cerr<<"caps issued"<<std::endl;
+		goto hit_dn;
+	}
 	if (!dn->inode && (dir->flags & I_COMPLETE)) {
 		cerr<<"icomplete"<<std::endl;
 	  ldout(cct, 10) << __func__ << " concluded ENOENT locally for "

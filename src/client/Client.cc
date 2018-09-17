@@ -6157,6 +6157,7 @@ int Client::_lookup(Inode *dir, const string& dname, int mask, InodeRef *target,
       return -ENOENT;
     }
   }
+  cerr<<"outside ifffff";
   r = _do_lookup(dir, dname, mask, target, perms);
   goto done;
 
@@ -10280,7 +10281,6 @@ Inode *Client::open_snapdir(Inode *diri)
 int Client::ll_lookup(Inode *parent, const char *name, struct stat *attr,
 		      Inode **out, const UserPerm& perms)
 {
-  cerr <<"hello";
   Mutex::Locker lock(client_lock);
   vinodeno_t vparent = _get_vino(parent);
   ldout(cct, 3) << __func__ << " " << vparent << " " << name << dendl;

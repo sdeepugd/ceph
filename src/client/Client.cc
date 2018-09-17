@@ -10566,12 +10566,6 @@ Inode *Client::ll_get_inode(ino_t ino)
   if (unmounting)
     return NULL;
 
-  for (ceph::unordered_map<vinodeno_t, Inode*>::iterator it = inode_map.begin();
-       it != inode_map.end();
-       ++it) {
-	  cerr<<"inode :"<<it->second->ino.val<<std::endl;
-  }
-  exit;
   vinodeno_t vino = _map_faked_ino(ino);
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
   if (p == inode_map.end())
@@ -10587,10 +10581,17 @@ Inode *Client::ll_get_inode(vinodeno_t vino)
 
   if (unmounting)
     return NULL;
-
+  for (ceph::unordered_map<vinodeno_t, Inode*>::iterator it = inode_map.begin();
+       it != inode_map.end();
+       ++it) {
+	  cerr<<"inode :"<<it->second->ino.val<<std::endl;
+  }
+  cerr<<"vino : "<<vino.ino.val<<std::endl;
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
-  if (p == inode_map.end())
+  if (p == inode_map.end()){
+	cerr<<"return null for inode get"<<std::endl;
     return NULL;
+  }
   Inode *in = p->second;
   _ll_get(in);
   return in;

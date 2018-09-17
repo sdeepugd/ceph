@@ -1518,12 +1518,15 @@ uint64_t CephFuse::Handle::fino_snap(uint64_t fino)
 
 Inode * CephFuse::Handle::iget(fuse_ino_t fino)
 {
-  if (fino == FUSE_ROOT_ID)
+  if (fino == FUSE_ROOT_ID){
+	  cerr<<"inside root"<<std::endl;
     return client->get_root();
-
+  }
   if (client->use_faked_inos()) {
+	  cerr<<"inside faked ino"<<std::endl;
     return client->ll_get_inode((ino_t)fino);
   } else {
+	  cerr<<"inside else"<<std::endl;
     vinodeno_t vino(FINO_INO(fino), fino_snap(fino));
     return client->ll_get_inode(vino);
   }

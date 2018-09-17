@@ -10248,6 +10248,7 @@ int Client::get_caps_issued(const char *path, const UserPerm& perms)
 
 Inode *Client::open_snapdir(Inode *diri)
 {
+	cerr<<"open snap dir :"<<std::endl;
   Inode *in;
   vinodeno_t vino(diri->ino, CEPH_SNAPDIR);
   if (!inode_map.count(vino)) {
@@ -10565,6 +10566,12 @@ Inode *Client::ll_get_inode(ino_t ino)
   if (unmounting)
     return NULL;
 
+  for (ceph::unordered_map<vinodeno_t, Inode*>::iterator it = inode_map.begin();
+       it != inode_map.end();
+       ++it) {
+	  cerr<<"inode :"<<it->second->ino.val<<std::endl;
+  }
+  exit;
   vinodeno_t vino = _map_faked_ino(ino);
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
   if (p == inode_map.end())
@@ -13690,13 +13697,6 @@ bool Client::is_quota_files_exceeded(Inode *in, const UserPerm& perms)
 bool Client::is_quota_bytes_exceeded(Inode *in, int64_t new_bytes,
 				     const UserPerm& perms)
 {
-	cerr<<"inside quota >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"<<std::endl;
-  if(in->quota.max_bytes)	{
-	  cerr<<"quota max bytes: "<<in->quota.max_bytes<<std::endl;
-	  cerr<<"quota rstat rbytes: "<<in->rstat.rbytes<<std::endl;
-  } else {
-	  cerr << "else in quota "<<std::endl;
-  }
   return check_quota_condition(in, perms,
       [&new_bytes](const Inode &in) {
         return in.quota.max_bytes && (in.rstat.rbytes + new_bytes)

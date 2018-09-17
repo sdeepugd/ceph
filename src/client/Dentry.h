@@ -31,7 +31,7 @@ public:
     assert(ref > 0);
     if (++ref == 2)
       lru_pin();
-    cerr << "dentry.get on " << this << " " << name << " now " << ref << std::endl;
+    //cout << "dentry.get on " << this << " " << name << " now " << ref << std::endl;
   }
   void put() {
     assert(ref > 0);

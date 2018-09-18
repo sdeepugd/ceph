@@ -787,7 +787,7 @@ void Client::_fragmap_remove_stopped_mds(Inode *in, mds_rank_t mds)
 
 Inode * Client::add_update_inode(InodeStat *st, utime_t from,
 				 MetaSession *session,
-				 const UserPerm& request_perms)
+				 const UserPerm& request_perms)// this is where the Inode is extracted from mds reply and the Inode is initialized and put into the InodeMap.
 {
   Inode *in;
   bool was_new = false;
@@ -868,6 +868,7 @@ Inode * Client::add_update_inode(InodeStat *st, utime_t from,
       ldout(cct, 20) << " dir hash is " << (int)in->dir_layout.dl_dir_hash << dendl;
       in->rstat = st->rstat;
       in->quota = st->quota;
+      cerr<<"max bytes for this dir"<<st->quota.max_bytes<<std::endl;
     }
     // move me if/when version reflects fragtree changes.
     if (in->dirfragtree != st->dirfragtree) {

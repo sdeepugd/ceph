@@ -1221,6 +1221,7 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
  */
 Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 {
+  cerr<<"inside insert trace";
   MClientReply *reply = request->reply;
   int op = request->get_op();
 

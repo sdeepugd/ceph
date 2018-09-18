@@ -1637,7 +1637,7 @@ int Client::make_request(MetaRequest *request,
 
   // make note
   mds_requests[tid] = request->get();//add this request to mds request array.
-  if(request)
+  if(request!= NULL && request->get_op())
   cerr<<"in mds send request . Ceph MDS operation :"<<request->get_op()<<std::endl;
   if (oldest_tid == 0 && request->get_op() != CEPH_MDS_OP_SETFILELOCK)
     oldest_tid = tid;
@@ -1712,6 +1712,7 @@ int Client::make_request(MetaRequest *request,
     }
 
     // send request.
+    cerr<<"sending request"<<std::endl;
     send_request(request, session);
 
     // wait for signal
@@ -2313,6 +2314,7 @@ void Client::handle_client_reply(MClientReply *reply)
     request->send_to_auth = true;
     request->resend_mds = choose_target_mds(request);
     Inode *in = request->inode();
+    cerr<<"inside request -> inode"<<std::endl;
     std::map<mds_rank_t, Cap>::const_iterator it;
     if (request->resend_mds >= 0 &&
 	request->resend_mds == request->mds &&

@@ -97,6 +97,7 @@
 #include "include/stat.h"
 
 #include "include/cephfs/ceph_statx.h"
+#include <typeinfo>
 
 #if HAVE_GETGROUPLIST
 #include <grp.h>
@@ -1235,6 +1236,7 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 		   <<std::endl;
 
   auto p = reply->get_trace_bl().cbegin();
+  cerr<<"type of p :"<<typeid(p).name()<<std::endl;
   if (request->got_unsafe) {
     ldout(cct, 10) << "insert_trace -- already got unsafe; ignoring" << dendl;
     assert(p.end());

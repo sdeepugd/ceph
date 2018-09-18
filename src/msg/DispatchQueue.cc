@@ -157,7 +157,7 @@ void DispatchQueue::entry()
   cerr<<"dispatch queue entry"<<std::endl;
   lock.Lock();
   while (true) {
-    while (!mqueue.empty()) {
+    while (!mqueue.empty()) {//queue where the replies are being put
       QueueItem qitem = mqueue.dequeue();
       if (!qitem.is_code())
 	remove_arrival(qitem.get_message());
@@ -173,6 +173,7 @@ void DispatchQueue::entry()
 			<< dendl;
 	  t.sleep();
 	}
+	cerr<<"code in queue"<<qitem.get_code()<<std::endl;
 	switch (qitem.get_code()) {
 	case D_BAD_REMOTE_RESET:
 	  msgr->ms_deliver_handle_remote_reset(qitem.get_connection());

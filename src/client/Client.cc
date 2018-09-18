@@ -2344,6 +2344,7 @@ void Client::handle_client_reply(MClientReply *reply)
       dir->unsafe_ops.push_back(&request->unsafe_dir_item);
     }
     if (request->target) {
+    	cerr<<"request -> target in is safe "<<std::endl;
       InodeRef &in = request->target;
       in->unsafe_ops.push_back(&request->unsafe_target_item);
     }

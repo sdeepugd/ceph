@@ -1631,7 +1631,7 @@ void Server::set_trace_dist(Session *session, MClientReply *reply,
  */
 void Server::handle_client_request(MClientRequest *req)
 {
-  dout(4) << "handle_client_request " << *req << dendl;
+  dout(1) << "handle_client_request " << *req << dendl;
 
   if (mds->logger)
     mds->logger->inc(l_mds_request);
@@ -1778,6 +1778,7 @@ void Server::handle_osd_map()
 
 void Server::dispatch_client_request(MDRequestRef& mdr)
 {
+	dout(1) << "in dispatch request" << dendl;
   // we shouldn't be waiting on anyone.
   assert(!mdr->has_more() || mdr->more()->waiting_on_slave.empty());
 

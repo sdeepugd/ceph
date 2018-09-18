@@ -1637,7 +1637,7 @@ int Client::make_request(MetaRequest *request,
 
   // make note
   mds_requests[tid] = request->get();//add this request to mds request array.
-  cerr<<"in mds send request .Ceph MDS operation :"<<request->get_op()<<std::endl;
+  cerr<<"in mds send request . Ceph MDS operation :"<<request->get_op()<<std::endl;
   if (oldest_tid == 0 && request->get_op() != CEPH_MDS_OP_SETFILELOCK)
     oldest_tid = tid;
 
@@ -2276,6 +2276,7 @@ bool Client::is_dir_operation(MetaRequest *req)
 
 void Client::handle_client_reply(MClientReply *reply)
 {
+  cerr<<"handle client reply called "<<std::endl;
   mds_rank_t mds_num = mds_rank_t(reply->get_source().num());
   MetaSession *session = _get_mds_session(mds_num, reply->get_connection().get());
   if (!session) {

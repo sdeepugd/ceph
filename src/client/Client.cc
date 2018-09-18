@@ -1232,10 +1232,10 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 	   << " is_target=" << (int)reply->head.is_target
 	   << " is_dentry=" << (int)reply->head.is_dentry
 	   << dendl;
-  //cerr<<"inside insert trace"
-		   << " is_target=" << (int)reply->head.is_target
-		   << " is_dentry=" << (int)reply->head.is_dentry
-		   <<std::endl;
+//  cerr<<"inside insert trace"
+//		   << " is_target=" << (int)reply->head.is_target
+//		   << " is_dentry=" << (int)reply->head.is_dentry
+//		   <<std::endl;
 
   auto p = reply->get_trace_bl().cbegin();
   //cerr<<"type of p :"<<typeid(p).name()<<std::endl;

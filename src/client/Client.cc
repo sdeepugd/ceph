@@ -868,7 +868,8 @@ Inode * Client::add_update_inode(InodeStat *st, utime_t from,
       ldout(cct, 20) << " dir hash is " << (int)in->dir_layout.dl_dir_hash << dendl;
       in->rstat = st->rstat;
       in->quota = st->quota;
-      cerr<<"max bytes for this dir"<<st->quota.max_bytes<<std::endl;
+      //cerr<<"max bytes for this dir"<<st->quota.max_bytes<<std::endl;
+      //cerr<<"rstat bytes for this dir"<<st->rstat.rbytes<<std::endl;
     }
     // move me if/when version reflects fragtree changes.
     if (in->dirfragtree != st->dirfragtree) {
@@ -1223,7 +1224,7 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
  */
 Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 {
-  cerr<<"inside insert trace"<<std::endl;
+  //cerr<<"inside insert trace"<<std::endl;
   MClientReply *reply = request->reply;
   int op = request->get_op();
 
@@ -1231,13 +1232,13 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 	   << " is_target=" << (int)reply->head.is_target
 	   << " is_dentry=" << (int)reply->head.is_dentry
 	   << dendl;
-  cerr<<"inside insert trace"
+  //cerr<<"inside insert trace"
 		   << " is_target=" << (int)reply->head.is_target
 		   << " is_dentry=" << (int)reply->head.is_dentry
 		   <<std::endl;
 
   auto p = reply->get_trace_bl().cbegin();
-  cerr<<"type of p :"<<typeid(p).name()<<std::endl;
+  //cerr<<"type of p :"<<typeid(p).name()<<std::endl;
   if (request->got_unsafe) {
     ldout(cct, 10) << "insert_trace -- already got unsafe; ignoring" << dendl;
     assert(p.end());
@@ -1249,7 +1250,7 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 
     Dentry *d = request->dentry();
     if (d) {
-      cerr<<"inside dentry condition"<<std::endl;
+      //cerr<<"inside dentry condition"<<std::endl;
       Inode *diri = d->dir->parent_inode;
       diri->dir_release_count++;
       clear_dir_complete_and_ordered(diri, true);
@@ -1647,7 +1648,7 @@ int Client::make_request(MetaRequest *request,
   // make note
   mds_requests[tid] = request->get();//add this request to mds request array.
   if(request!= NULL && request->get_op())
-  cerr<<"in mds send request . Ceph MDS operation :"<<request->get_op()<<std::endl;
+  //cerr<<"in mds send request . Ceph MDS operation :"<<request->get_op()<<std::endl;
   if (oldest_tid == 0 && request->get_op() != CEPH_MDS_OP_SETFILELOCK)
     oldest_tid = tid;
 
@@ -1721,17 +1722,17 @@ int Client::make_request(MetaRequest *request,
     }
 
     // send request.
-    cerr<<"sending request"<<std::endl;
+    //cerr<<"sending request"<<std::endl;
     send_request(request, session);
 
     // wait for signal
     ldout(cct, 20) << "awaiting reply|forward|kick on " << &caller_cond << dendl;
     request->kick = false;
     while (!request->reply && request->resend_mds < 0 && !request->kick){ //reply forward
-    	cerr<<">";
+    	//cerr<<">";
       caller_cond.Wait(client_lock);
     }
-    cerr<<std::endl;
+    //cerr<<std::endl;
     request->caller_cond = NULL;
 
     // did we get a reply?
@@ -1746,7 +1747,7 @@ int Client::make_request(MetaRequest *request,
     request->item.remove_myself();
     unregister_request(request);
     put_request(request);
-    cerr<<"request reply null"<<std::endl;
+    //cerr<<"request reply null"<<std::endl;
     return r;
   }
 
@@ -2287,7 +2288,7 @@ bool Client::is_dir_operation(MetaRequest *req)
 
 void Client::handle_client_reply(MClientReply *reply)
 {
-  cerr<<"handle client reply called "<<std::endl;
+  //cerr<<"handle client reply called "<<std::endl;
   mds_rank_t mds_num = mds_rank_t(reply->get_source().num());
   MetaSession *session = _get_mds_session(mds_num, reply->get_connection().get());
   if (!session) {
@@ -2323,7 +2324,7 @@ void Client::handle_client_reply(MClientReply *reply)
     request->send_to_auth = true;
     request->resend_mds = choose_target_mds(request);
     Inode *in = request->inode();
-    cerr<<"inside request -> inode"<<std::endl;
+    //cerr<<"inside request -> inode"<<std::endl;
     std::map<mds_rank_t, Cap>::const_iterator it;
     if (request->resend_mds >= 0 &&
 	request->resend_mds == request->mds &&
@@ -2352,7 +2353,7 @@ void Client::handle_client_reply(MClientReply *reply)
       dir->unsafe_ops.push_back(&request->unsafe_dir_item);
     }
     if (request->target) {
-    	cerr<<"request -> target in is safe "<<std::endl;
+    	//cerr<<"request -> target in is safe "<<std::endl;
       InodeRef &in = request->target;
       in->unsafe_ops.push_back(&request->unsafe_target_item);
     }
@@ -8282,7 +8283,7 @@ int Client::lookup_hash(inodeno_t ino, inodeno_t dirino, const char *name,
 int Client::_lookup_ino(inodeno_t ino, const UserPerm& perms, Inode **inode)
 {
   ldout(cct, 8) << __func__ << " enter(" << ino << ")" << dendl;
-  cerr<<"lookup for inode :"<<ino<<"in mds"<<std::endl;
+  //cerr<<"lookup for inode :"<<ino<<"in mds"<<std::endl;
   if (unmounting)
     return -ENOTCONN;
 
@@ -10265,7 +10266,7 @@ int Client::get_caps_issued(const char *path, const UserPerm& perms)
 
 Inode *Client::open_snapdir(Inode *diri)
 {
-	cerr<<"open snap dir :"<<std::endl;
+	//cerr<<"open snap dir :"<<std::endl;
   Inode *in;
   vinodeno_t vino(diri->ino, CEPH_SNAPDIR);
   if (!inode_map.count(vino)) {
@@ -10598,7 +10599,7 @@ Inode *Client::ll_get_inode(vinodeno_t vino)
     return NULL;
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
   if (p == inode_map.end()){
-	cerr<<"returning null for inode  find in inode map"<<std::endl;
+	//cerr<<"returning null for inode  find in inode map"<<std::endl;
     return NULL;
   }
   Inode *in = p->second;

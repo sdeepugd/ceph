@@ -154,6 +154,7 @@ void DispatchQueue::dispatch_throttle_release(uint64_t msize)
  */
 void DispatchQueue::entry()
 {
+  cerr<<"dispatch queue entry"<<std::endl;
   lock.Lock();
   while (true) {
     while (!mqueue.empty()) {

@@ -99,6 +99,7 @@ class DispatchQueue {
   public:
     explicit DispatchThread(DispatchQueue *dq) : dq(dq) {}
     void *entry() override {
+      cerr<<"dispatch thread"<<std::endl;
       dq->entry();
       return 0;
     }

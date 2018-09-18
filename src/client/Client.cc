@@ -1636,11 +1636,12 @@ int Client::make_request(MetaRequest *request,
   request->op_stamp = ceph_clock_now();
 
   // make note
-  mds_requests[tid] = request->get();
+  mds_requests[tid] = request->get();//add this request to mds request array.
+  cerr<<"in mds send request .Ceph MDS operation :"<<request->get_op()<<std::endl;
   if (oldest_tid == 0 && request->get_op() != CEPH_MDS_OP_SETFILELOCK)
     oldest_tid = tid;
 
-  request->set_caller_perms(perms);
+  request->set_caller_perms(perms);//set perms to request
 
   if (cct->_conf->client_inject_fixed_oldest_tid) {
     ldout(cct, 20) << __func__ << " injecting fixed oldest_client_tid(1)" << dendl;
@@ -1650,7 +1651,7 @@ int Client::make_request(MetaRequest *request,
   }
 
   // hack target mds?
-  if (use_mds >= 0)
+  if (use_mds >= 0)//send request to some other mds
     request->resend_mds = use_mds;
 
   while (1) {
@@ -1688,7 +1689,7 @@ int Client::make_request(MetaRequest *request,
 
     // open a session?
     MetaSession *session = NULL;
-    if (!have_open_session(mds)) {
+    if (!have_open_session(mds)) {//check for any open session if not open.
       session = _get_or_open_mds_session(mds);
 
       // wait
@@ -1706,7 +1707,7 @@ int Client::make_request(MetaRequest *request,
       if (!have_open_session(mds))
 	continue;
     } else {
-      session = &mds_sessions.at(mds);
+      session = &mds_sessions.at(mds);//get mds session.
     }
 
     // send request.
@@ -1715,10 +1716,11 @@ int Client::make_request(MetaRequest *request,
     // wait for signal
     ldout(cct, 20) << "awaiting reply|forward|kick on " << &caller_cond << dendl;
     request->kick = false;
-    while (!request->reply &&         // reply
-	   request->resend_mds < 0 && // forward
-	   !request->kick)
+    while (!request->reply && request->resend_mds < 0 && !request->kick){ //reply forward
+    	cerr<<">";
       caller_cond.Wait(client_lock);
+    }
+    cerr<<std::endl;
     request->caller_cond = NULL;
 
     // did we get a reply?
@@ -1733,6 +1735,7 @@ int Client::make_request(MetaRequest *request,
     request->item.remove_myself();
     unregister_request(request);
     put_request(request);
+    cerr<<"request reply null"<<std::endl;
     return r;
   }
 
@@ -1750,7 +1753,7 @@ int Client::make_request(MetaRequest *request,
   request->dispatch_cond = 0;
   
   if (r >= 0 && ptarget)
-    r = verify_reply_trace(r, request, reply, ptarget, pcreated, perms);
+    r = verify_reply_trace(r, request, reply, ptarget, pcreated, perms);//something nadukuthu
 
   if (pdirbl)
     pdirbl->claim(reply->get_extra_bl());
@@ -8265,7 +8268,7 @@ int Client::lookup_hash(inodeno_t ino, inodeno_t dirino, const char *name,
 int Client::_lookup_ino(inodeno_t ino, const UserPerm& perms, Inode **inode)
 {
   ldout(cct, 8) << __func__ << " enter(" << ino << ")" << dendl;
-
+  cerr<<"lookup for inode :"<<ino<<"in mds"<<std::endl;
   if (unmounting)
     return -ENOTCONN;
 
@@ -10456,8 +10459,6 @@ void Client::_ll_get(Inode *in)
       ll_snap_ref[in->snapid]++;
   }
 
-  Logger *logger = Logger::getInstance();
-
   in->ll_get();
   ldout(cct, 20) << __func__ << " " << in << " " << in->ino << " -> " << in->ll_ref << dendl;
 }
@@ -10581,10 +10582,9 @@ Inode *Client::ll_get_inode(vinodeno_t vino)
 
   if (unmounting)
     return NULL;
-  cerr<<"vino : "<<vino.ino.val<<std::endl;
   unordered_map<vinodeno_t,Inode*>::iterator p = inode_map.find(vino);
   if (p == inode_map.end()){
-	cerr<<"return null for inode get"<<std::endl;
+	cerr<<"returning null for inode  find in inode map"<<std::endl;
     return NULL;
   }
   Inode *in = p->second;

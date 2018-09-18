@@ -349,14 +349,15 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;
-  Inode *i2, *i1 = cfuse->iget(parent); // see below
+  Inode *i2, *i1 = cfuse->iget(parent); // see below //get inode of the parent from inode map(cache)
 
   int r;
   UserPerm perms(ctx->uid, ctx->gid);
   get_fuse_groups(perms, req);
   if (!i1)
   {
-    r = cfuse->client->lookup_ino(parent, perms, &i1);
+	cerr<<"i1 inode is null"<<std::endl;
+    r = cfuse->client->lookup_ino(parent, perms, &i1);// mds request for looking up parent
     if (r < 0) {
       fuse_reply_err(req, -r);
       return;
@@ -1519,14 +1520,11 @@ uint64_t CephFuse::Handle::fino_snap(uint64_t fino)
 Inode * CephFuse::Handle::iget(fuse_ino_t fino)
 {
   if (fino == FUSE_ROOT_ID){
-	  cerr<<"inside root"<<std::endl;
     return client->get_root();
   }
-  if (client->use_faked_inos()) {
-	  cerr<<"inside faked ino"<<std::endl;
+  if (client->use_faked_inos()) { // 32 bit inodes
     return client->ll_get_inode((ino_t)fino);
   } else {
-	  cerr<<"inside else"<<std::endl;
     vinodeno_t vino(FINO_INO(fino), fino_snap(fino));
     return client->ll_get_inode(vino);
   }

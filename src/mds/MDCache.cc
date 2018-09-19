@@ -450,7 +450,7 @@ void MDCache::create_empty_hierarchy(MDSGather *gather)
 void MDCache::create_mydir_hierarchy(MDSGather *gather)
 {
   // create mds dir
-	dout(1) << "create_empty_hierarchy" << dendl;
+	dout(1) << "create_mydir_hierarchy" << dendl;
   CInode *my = create_system_inode(MDS_INO_MDSDIR(mds->get_nodeid()), S_IFDIR);
 
   CDir *mydir = my->get_or_open_dirfrag(this, frag_t());
@@ -822,6 +822,7 @@ MDSCacheObject *MDCache::get_object(MDSCacheObjectInfo &info)
 
 void MDCache::list_subtrees(list<CDir*>& ls)
 {
+	dout(1) << "list subtrees " << dendl;
   for (map<CDir*,set<CDir*> >::iterator p = subtrees.begin();
        p != subtrees.end();
        ++p)
@@ -835,7 +836,7 @@ void MDCache::list_subtrees(list<CDir*>& ls)
  */
 void MDCache::adjust_subtree_auth(CDir *dir, mds_authority_t auth, bool adjust_pop)
 {
-  dout(7) << "adjust_subtree_auth " << dir->get_dir_auth() << " -> " << auth
+  dout(1) << "adjust_subtree_auth " << dir->get_dir_auth() << " -> " << auth
 	  << " on " << *dir << dendl;
 
   show_subtrees();
@@ -1006,7 +1007,7 @@ void MDCache::eval_subtree_root(CInode *diri)
 
 void MDCache::adjust_bounded_subtree_auth(CDir *dir, set<CDir*>& bounds, mds_authority_t auth)
 {
-  dout(7) << "adjust_bounded_subtree_auth " << dir->get_dir_auth() << " -> " << auth
+  dout(1) << "adjust_bounded_subtree_auth " << dir->get_dir_auth() << " -> " << auth
 	  << " on " << *dir
 	  << " bounds " << bounds
 	  << dendl;
@@ -1234,6 +1235,7 @@ void MDCache::map_dirfrag_set(list<dirfrag_t>& dfs, set<CDir*>& result)
 
 CDir *MDCache::get_subtree_root(CDir *dir)
 {
+	dout(1) << "get_subtree_root " << *dir << dendl;
   // find the underlying dir that delegates (or is about to delegate) auth
   while (true) {
     if (dir->is_subtree_root()) 
@@ -1246,6 +1248,7 @@ CDir *MDCache::get_subtree_root(CDir *dir)
 
 CDir *MDCache::get_projected_subtree_root(CDir *dir)
 {
+	dout(1) << "get_projected_subtree_root " << *dir << dendl;
   // find the underlying dir that delegates (or is about to delegate) auth
   while (true) {
     if (dir->is_subtree_root()) 
@@ -1517,6 +1520,7 @@ CInode *MDCache::pick_inode_snap(CInode *in, snapid_t follows)
  */
 CInode *MDCache::cow_inode(CInode *in, snapid_t last)
 {
+	dout(1) << "cow_inode " << follows << " on " << *in << dendl;
   assert(last >= in->first);
 
   CInode *oldin = new CInode(this, true, in->first, last);
@@ -1600,7 +1604,7 @@ void MDCache::journal_cow_dentry(MutationImpl *mut, EMetaBlob *metablob,
     dout(1) << "journal_cow_dentry got null CDentry, returning" << dendl;
     return;
   }
-  dout(10) << "journal_cow_dentry follows " << follows << " on " << *dn << dendl;
+  dout(1) << "journal_cow_dentry follows " << follows << " on " << *dn << dendl;
   assert(dn->is_auth());
 
   // nothing to cow on a null dentry, fix caller
@@ -1732,6 +1736,7 @@ void MDCache::journal_cow_inode(MutationRef& mut, EMetaBlob *metablob,
 
 void MDCache::journal_dirty_inode(MutationImpl *mut, EMetaBlob *metablob, CInode *in, snapid_t follows)
 {
+	dout(1) << "journal_dirty_inode " << follows << " on " << *in << dendl;
   if (in->is_base()) {
     metablob->add_root(true, in);
   } else {
@@ -1763,10 +1768,10 @@ void MDCache::project_rstat_inode_to_frag(CInode *cur, CDir *parent, snapid_t fi
   if (cur->first > first)
     first = cur->first;
 
-  dout(10) << "projected_rstat_inode_to_frag first " << first << " linkunlink " << linkunlink
+  dout(1) << "projected_rstat_inode_to_frag first " << first << " linkunlink " << linkunlink
 	   << " " << *cur << dendl;
-  dout(20) << "    frag head is [" << parent->first << ",head] " << dendl;
-  dout(20) << " inode update is [" << first << "," << cur->last << "]" << dendl;
+  dout(1) << "    frag head is [" << parent->first << ",head] " << dendl;
+  dout(1) << " inode update is [" << first << "," << cur->last << "]" << dendl;
 
   /*
    * FIXME.  this incompletely propagates rstats to _old_ parents
@@ -2001,6 +2006,7 @@ void MDCache::project_rstat_frag_to_inode(nest_info_t& rstat, nest_info_t& accou
 
 void MDCache::broadcast_quota_to_client(CInode *in, client_t exclude_ct)
 {
+	dout(1) << "broadcast_quota_to_client" << dendl;
   if (!(mds->is_active() || mds->is_stopping()))
     return;
 
@@ -2508,7 +2514,7 @@ void MDCache::_move_subtree_map_bound(dirfrag_t df, dirfrag_t oldparent, dirfrag
 {
   if (subtrees.count(oldparent)) {
       vector<dirfrag_t>& v = subtrees[oldparent];
-      dout(10) << " removing " << df << " from " << oldparent << " bounds " << v << dendl;
+      dout(1) << " removing " << df << " from " << oldparent << " bounds " << v << dendl;
       for (vector<dirfrag_t>::iterator it = v.begin(); it != v.end(); ++it)
 	if (*it == df) {
 	  v.erase(it);
@@ -2517,7 +2523,7 @@ void MDCache::_move_subtree_map_bound(dirfrag_t df, dirfrag_t oldparent, dirfrag
     }
   if (subtrees.count(newparent)) {
     vector<dirfrag_t>& v = subtrees[newparent];
-    dout(10) << " adding " << df << " to " << newparent << " bounds " << v << dendl;
+    dout(1) << " adding " << df << " to " << newparent << " bounds " << v << dendl;
     v.push_back(df);
   }
 }
@@ -2694,7 +2700,7 @@ void MDCache::dump_resolve_status(Formatter *f) const
 
 void MDCache::resolve_start(MDSInternalContext *resolve_done_)
 {
-  dout(10) << "resolve_start" << dendl;
+  dout(1) << "resolve_start" << dendl;
   assert(!resolve_done);
   resolve_done.reset(resolve_done_);
 
@@ -2805,7 +2811,7 @@ void MDCache::send_slave_resolves()
 
 void MDCache::send_subtree_resolves()
 {
-  dout(10) << "send_subtree_resolves" << dendl;
+  dout(1) << "send_subtree_resolves" << dendl;
 
   if (migrator->is_exporting() || migrator->is_importing()) {
     dout(7) << "send_subtree_resolves waiting, imports/exports still in progress" << dendl;
@@ -7570,7 +7576,7 @@ void MDCache::trim_client_leases()
 {
   utime_t now = ceph_clock_now();
   
-  dout(1) << "trim_client_leases" << dendl;
+  dout(10) << "trim_client_leases" << dendl;
 
   for (int pool=0; pool<client_lease_pools; pool++) {
     int before = client_leases[pool].size();
@@ -8419,7 +8425,7 @@ CInode *MDCache::get_dentry_inode(CDentry *dn, MDRequestRef& mdr, bool projected
   assert(dnl->is_remote());
   CInode *in = get_inode(dnl->get_remote_ino());
   if (in) {
-    dout(7) << "get_dentry_inode linking in remote in " << *in << dendl;
+    dout(1) << "get_dentry_inode linking in remote in " << *in << dendl;
     dn->link_remote(dnl, in);
     return in;
   } else {
@@ -8544,7 +8550,7 @@ struct C_MDC_OpenInoParentOpened : public MDCacheContext {
 
 void MDCache::_open_ino_backtrace_fetched(inodeno_t ino, bufferlist& bl, int err)
 {
-  dout(10) << "_open_ino_backtrace_fetched ino " << ino << " errno " << err << dendl;
+  dout(1) << "_open_ino_backtrace_fetched ino " << ino << " errno " << err << dendl;
 
   open_ino_info_t& info = opening_inodes.at(ino);
 
@@ -8645,7 +8651,7 @@ void MDCache::_open_ino_parent_opened(inodeno_t ino, int ret)
 
 void MDCache::_open_ino_traverse_dir(inodeno_t ino, open_ino_info_t& info, int ret)
 {
-  dout(10) << __func__ << ": ino " << ino << " ret " << ret << dendl;
+  dout(1) << __func__ << ": ino " << ino << " ret " << ret << dendl;
 
   CInode *in = get_inode(ino);
   if (in) {
@@ -8785,6 +8791,7 @@ void MDCache::open_ino_finish(inodeno_t ino, open_ino_info_t& info, int ret)
 
 void MDCache::do_open_ino(inodeno_t ino, open_ino_info_t& info, int err)
 {
+	dout(1) << "do_open_ino" << ino << dendl;
   if (err < 0 && err != -EAGAIN) {
     info.checked.clear();
     info.checking = MDS_RANK_NONE;

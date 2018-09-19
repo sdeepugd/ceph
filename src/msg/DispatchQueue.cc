@@ -173,7 +173,6 @@ void DispatchQueue::entry()
 			<< dendl;
 	  t.sleep();
 	}
-	cerr<<"code in queue"<<qitem.get_code()<<std::endl;
 	switch (qitem.get_code()) {
 	case D_BAD_REMOTE_RESET:
 	  msgr->ms_deliver_handle_remote_reset(qitem.get_connection());

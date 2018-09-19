@@ -1520,7 +1520,7 @@ CInode *MDCache::pick_inode_snap(CInode *in, snapid_t follows)
  */
 CInode *MDCache::cow_inode(CInode *in, snapid_t last)
 {
-	dout(1) << "cow_inode " << follows << " on " << *in << dendl;
+	dout(1) << "cow_inode " << dendl;
   assert(last >= in->first);
 
   CInode *oldin = new CInode(this, true, in->first, last);

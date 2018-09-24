@@ -346,7 +346,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  push_to_server(6,str);
   print_inode(parent);
 
-  cerr<<"lookup called" << parent<<std::endl;
+  cerr<<"lookup called   " << parent<<std::endl;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   struct fuse_entry_param fe;

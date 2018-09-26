@@ -1012,7 +1012,6 @@ static void fuse_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
   rc.snap = cfuse->fino_snap(ino);
 
   int r = cfuse->client->readdir_r_cb(dirp, fuse_ll_add_dirent, &rc);
-  push_to_server(opType,concat("buffer :",rc.buf));
   if (r == 0 || r == -ENOSPC)  /* ignore ENOSPC from our callback */
   {
 	  fuse_reply_buf(req, rc.buf, rc.pos);

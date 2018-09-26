@@ -134,6 +134,7 @@ void Log::set_max_recent(int n)
 
 void Log::set_log_file(string fn)
 {
+	cerr<<"logfile :"<<fn<<std::endl;
   m_log_file = fn;
 }
 

@@ -341,10 +341,10 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 //  log_ceph_sock("looking up\n");
   int opType = 6;
   push_to_server(opType,name);
-  char str[256];
-  sprintf(str, "%lld", parent);
-  push_to_server(6,str);
-  print_inode(parent);
+//  char str[256];
+//  sprintf(str, "%lld", parent);
+//  push_to_server(6,str);
+//  print_inode(parent);
 
   cerr<<"lookup called   " << parent<<std::endl;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
@@ -948,9 +948,9 @@ static void fuse_ll_release(fuse_req_t req, fuse_ino_t ino,
 static void fuse_ll_fsync(fuse_req_t req, fuse_ino_t ino, int datasync,
 			  struct fuse_file_info *fi)
 {
-	  int opType = 24;
-	  push_to_server(opType,"");
-	  print_inode(ino);
+//	  int opType = 24;
+//	  push_to_server(opType,"");
+//	  print_inode(ino);
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_fsync(fh, datasync);

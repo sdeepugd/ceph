@@ -697,25 +697,16 @@ static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 
 static void fuse_ll_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-	fuse_ino_t delFilesFolder_inode = 1099511721217;
-	if (parent != delFilesFolder_inode) {
-		push_to_server(5, name);
-		print_inode(parent);
-		const char *delname = concat(name,"_delfile");
-		fuse_ll_rename(req, parent, name, delFilesFolder_inode, delname);
-	} else {
-		CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
-		const struct fuse_ctx *ctx = fuse_req_ctx(req);
-		Inode *in = cfuse->iget(parent);
-		UserPerm perm(ctx->uid, ctx->gid);
-		get_fuse_groups(perm, req);
+	CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
+	const struct fuse_ctx *ctx = fuse_req_ctx(req);
+	Inode *in = cfuse->iget(parent);
+	UserPerm perm(ctx->uid, ctx->gid);
+	get_fuse_groups(perm, req);
 
-		int r = cfuse->client->ll_unlink(in, name, perm);
-		fuse_reply_err(req, -r);
+	int r = cfuse->client->ll_unlink(in, name, perm);
+	fuse_reply_err(req, -r);
 
-		cfuse->iput(in); // iput required
-	}
-
+	cfuse->iput(in); // iput required
 }
 
 static void fuse_ll_rmdir(fuse_req_t req, fuse_ino_t parent, const char *name)
@@ -865,6 +856,7 @@ static void fuse_ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	  int opType = 4;
 	  push_to_server(opType,"");
 	print_inode(ino);
+	cerr<<"write called"<<std::endl;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_write(fh, off, size, buf);

@@ -1646,9 +1646,7 @@ int Client::make_request(MetaRequest *request,
   request->op_stamp = ceph_clock_now();
 
   // make note
-  mds_requests[tid] = request->get();//add this request to mds request array.
-  if(request!= NULL && request->get_op())
-  //cerr<<"in mds send request . Ceph MDS operation :"<<request->get_op()<<std::endl;
+  mds_requests[tid] = request->get();
   if (oldest_tid == 0 && request->get_op() != CEPH_MDS_OP_SETFILELOCK)
     oldest_tid = tid;
 

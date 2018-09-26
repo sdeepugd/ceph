@@ -369,6 +369,7 @@ static void fuse_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   r = cfuse->client->ll_lookup(i1, name, &fe.attr, &i2, perms);
   if (r >= 0) {
     fe.ino = cfuse->make_fake_ino(fe.attr.st_ino, fe.attr.st_dev);
+    cerr<<"ino reply :"<<fe.attr.st_ino<<std::endl;
     fe.attr.st_rdev = new_encode_dev(fe.attr.st_rdev);
     print_inode(fe.ino);
     fuse_reply_entry(req, &fe);
@@ -856,7 +857,7 @@ static void fuse_ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	  int opType = 4;
 	  push_to_server(opType,"");
 	print_inode(ino);
-	cerr<<"write called"<<"ino : "<<ino<<std::endl;
+	cerr<<"write called"<<" ino : "<<ino<<std::endl;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_write(fh, off, size, buf);

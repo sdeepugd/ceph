@@ -428,6 +428,7 @@ void global_init_daemonize(CephContext *cct)
 void global_init_postfork_start(CephContext *cct)
 {
   // restart log thread
+  cerr<<"log file started"<<std::endl;
   cct->_log->start();
   cct->notify_post_fork();
 

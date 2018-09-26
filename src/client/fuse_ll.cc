@@ -856,7 +856,7 @@ static void fuse_ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 	  int opType = 4;
 	  push_to_server(opType,"");
 	print_inode(ino);
-	cerr<<"write called"<<std::endl;
+	cerr<<"write called"<<"ino : "<<ino<<std::endl;
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   Fh *fh = reinterpret_cast<Fh*>(fi->fh);
   int r = cfuse->client->ll_write(fh, off, size, buf);
